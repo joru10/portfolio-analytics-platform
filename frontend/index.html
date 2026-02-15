@@ -311,6 +311,16 @@
             <button id="saveSettings">Save</button>
           </div>
         </div>
+        <div class="row" style="margin-top: 10px;">
+          <div style="grid-column: span 2;">
+            <label for="providersInput">Providers Priority (comma-separated)</label>
+            <input id="providersInput" placeholder="demo, yfinance" />
+          </div>
+          <div style="grid-column: span 2;">
+            <label for="followedInput">Companies to Follow (symbols, comma-separated)</label>
+            <input id="followedInput" placeholder="AAPL, MSFT, BLAIZE" />
+          </div>
+        </div>
         <div class="mini" style="margin-top:8px;">Example temporary URL: `https://cities-gps-maybe-menus.trycloudflare.com`</div>
         <div style="display:flex; justify-content:flex-end; margin-top: 12px;">
           <button id="closeSettings" class="secondary">Close</button>
@@ -324,6 +334,8 @@
       const num = (v) => (v === null || v === undefined ? 0 : Number(v));
       const cls = (v) => (num(v) > 0 ? "pos" : num(v) < 0 ? "neg" : "");
       const STORE_KEY = "portfolio_api_base_url";
+      const STORE_PROVIDERS_KEY = "portfolio_providers";
+      const STORE_FOLLOWED_KEY = "portfolio_followed_symbols";
       let allocationChart;
       let pnlChart;
       let equityChart;
@@ -387,18 +399,38 @@
       async function refreshPrices() {
         const status = byId("connStatus");
         const snapshotDate = byId("snapshotDate").value || new Date().toISOString().slice(0, 10);
+        const followedSymbols = getFollowedSymbols();
+        const providers = getSelectedProviders();
         try {
           const payload = await request("/v1/prices/refresh", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ price_date: snapshotDate, symbols: [] })
+            body: JSON.stringify({ price_date: snapshotDate, symbols: followedSymbols, providers })
           });
-          status.innerHTML = `Prices refreshed (${payload.processed_count}/${payload.requested_count}), failures: ${payload.failed_symbols.length}`;
+          status.innerHTML = `Prices refreshed (${payload.processed_count}/${payload.requested_count}), providers: ${payload.providers_used.join(" → ")}, failures: ${payload.failed_symbols.length}`;
           return payload;
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
           throw err;
         }
+      }
+
+      function getSelectedProviders() {
+        const raw = localStorage.getItem(STORE_PROVIDERS_KEY);
+        if (!raw) return ["demo"];
+        const providers = raw
+          .split(",")
+          .map((x) => x.trim().toLowerCase())
+          .filter(Boolean);
+        return providers.length ? providers : ["demo"];
+      }
+
+      function getFollowedSymbols() {
+        const raw = localStorage.getItem(STORE_FOLLOWED_KEY) || "";
+        return raw
+          .split(",")
+          .map((x) => x.trim().toUpperCase())
+          .filter(Boolean);
       }
 
       function renderCharts(rows, analytics) {
@@ -492,8 +524,10 @@
             request(`/v1/positions${qs ? `?${qs}` : ""}`),
             request(`/v1/analytics${qs ? `?${qs}` : ""}`),
           ]);
-          const rows = positions.positions || [];
-          const totalMkt = num(metrics.total_market_value);
+          const followedSet = new Set(getFollowedSymbols());
+          const allRows = positions.positions || [];
+          const rows = followedSet.size ? allRows.filter((r) => followedSet.has(String(r.symbol).toUpperCase())) : allRows;
+          const totalMkt = rows.reduce((acc, r) => acc + num(r.market_value), 0);
           const unpricedCount = rows.filter((r) => r.market_price === null).length;
 
           metricsNode.innerHTML = [
@@ -554,8 +588,9 @@
           const top = movers[0];
 
           const insightItems = [
-            `Snapshot ${positions.snapshot_date}: ${rows.length} positions analyzed across ${Object.keys(byAccount).length} accounts.`,
+            `Snapshot ${positions.snapshot_date}: ${rows.length} positions analyzed across ${Object.keys(byAccount).length} accounts${followedSet.size ? ` (filtered to followed symbols: ${Array.from(followedSet).join(", ")})` : ""}.`,
             `Portfolio total PnL is ${fmt(pnlTotal)} (${fmt(metrics.total_unrealized_pnl)} unrealized + ${fmt(metrics.total_realized_pnl)} realized).`,
+            followedSet.size ? `Metrics cards are portfolio-level; tables/charts are filtered to followed symbols.` : "Metrics/tables/charts all represent the full selected portfolio scope.",
             top ? `Largest PnL mover is ${top.symbol} at ${fmt(top.totalPnl)}.` : "No movers available yet.",
             largest ? `Biggest concentration is ${largest.symbol} at ${fmt(largestWeight)}% of priced market value.` : "No priced exposure yet.",
             unpricedCount > 0 ? `${unpricedCount} symbols have no price for the selected date.` : "All symbols are priced for the selected date.",
@@ -596,6 +631,8 @@
         const base = getBase();
         byId("apiBaseDisplay").value = base;
         byId("apiBaseInput").value = localStorage.getItem(STORE_KEY) || "";
+        byId("providersInput").value = getSelectedProviders().join(", ");
+        byId("followedInput").value = getFollowedSymbols().join(", ");
       }
 
       function openSettings() {
@@ -609,8 +646,14 @@
 
       function saveSettings() {
         const val = byId("apiBaseInput").value.trim();
+        const providersVal = byId("providersInput").value.trim();
+        const followedVal = byId("followedInput").value.trim();
         if (val) localStorage.setItem(STORE_KEY, val);
         else localStorage.removeItem(STORE_KEY);
+        if (providersVal) localStorage.setItem(STORE_PROVIDERS_KEY, providersVal);
+        else localStorage.removeItem(STORE_PROVIDERS_KEY);
+        if (followedVal) localStorage.setItem(STORE_FOLLOWED_KEY, followedVal);
+        else localStorage.removeItem(STORE_FOLLOWED_KEY);
         syncSettingsUi();
         closeSettings();
       }
@@ -632,6 +675,7 @@
           localStorage.setItem(STORE_KEY, "https://portfolio-analytics-api-9nm3.onrender.com");
         }
       }
+      if (!localStorage.getItem(STORE_PROVIDERS_KEY)) localStorage.setItem(STORE_PROVIDERS_KEY, "demo, yfinance");
       syncSettingsUi();
     </script>
   </body>

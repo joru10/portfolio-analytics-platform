@@ -15,12 +15,18 @@ def refresh_prices_endpoint(request: PriceRefreshRequest, db: Session = Depends(
     effective_date = request.price_date or date.today()
 
     try:
-        result = refresh_prices(db=db, price_date=effective_date, symbols=request.symbols)
+        result = refresh_prices(
+            db=db,
+            price_date=effective_date,
+            symbols=request.symbols,
+            providers=request.providers,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return PriceRefreshResponse(
         provider=result.provider,
+        providers_used=result.providers_used,
         price_date=result.price_date,
         requested_count=result.requested_count,
         processed_count=result.processed_count,

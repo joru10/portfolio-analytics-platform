@@ -82,10 +82,12 @@ class AnalyticsResponse(BaseModel):
 class PriceRefreshRequest(BaseModel):
     price_date: date | None = None
     symbols: list[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)
 
 
 class PriceRefreshResponse(BaseModel):
     provider: str
+    providers_used: list[str]
     price_date: date
     requested_count: int
     processed_count: int

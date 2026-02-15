@@ -1,4 +1,3 @@
-from app.config import settings
 from app.models import JobRun, PriceEOD
 
 
@@ -16,6 +15,7 @@ ACC1,MSFT,2026-02-10,BUY,3,100,0,USD,T2
     assert first.json()["requested_count"] == 2
     assert first.json()["processed_count"] == 2
     assert first.json()["failed_symbols"] == []
+    assert first.json()["providers_used"] == ["demo"]
 
     second = client.post("/v1/prices/refresh", json=payload)
     assert second.status_code == 200
@@ -39,12 +39,21 @@ def test_price_refresh_tracks_provider_failures(client) -> None:
 
 
 def test_price_refresh_rejects_unknown_provider(client) -> None:
-    original_provider = settings.market_data_provider
-    settings.market_data_provider = "unknown"
+    response = client.post(
+        "/v1/prices/refresh",
+        json={"price_date": "2026-02-14", "symbols": ["AAPL"], "providers": ["unknown"]},
+    )
+    assert response.status_code == 400
+    assert "Unsupported market data provider" in response.json()["detail"]
 
-    try:
-        response = client.post("/v1/prices/refresh", json={"price_date": "2026-02-14", "symbols": ["AAPL"]})
-        assert response.status_code == 400
-        assert "Unsupported market data provider" in response.json()["detail"]
-    finally:
-        settings.market_data_provider = original_provider
+
+def test_price_refresh_provider_fallback_chain(client) -> None:
+    response = client.post(
+        "/v1/prices/refresh",
+        json={"price_date": "2026-02-14", "symbols": ["XFAIL_BAD", "AAPL"], "providers": ["demo", "yfinance"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["requested_count"] == 2
+    assert response.json()["processed_count"] >= 1
+    assert response.json()["providers_used"] == ["demo", "yfinance"]
