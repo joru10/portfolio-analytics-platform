@@ -224,6 +224,10 @@
               <label for="account">Account (optional)</label>
               <input id="account" placeholder="ACC1" />
             </div>
+            <div>
+              <label for="lookbackDays">Lookback Days</label>
+              <input id="lookbackDays" type="number" min="30" step="30" value="180" />
+            </div>
           </div>
           <div id="importStatus" class="status"></div>
         </section>
@@ -266,9 +270,13 @@
 
         <section class="card">
           <h3>Charts</h3>
-          <div class="split">
+          <div class="split" style="margin-bottom: 12px;">
             <div class="canvas-wrap"><canvas id="allocationChart"></canvas></div>
             <div class="canvas-wrap"><canvas id="pnlChart"></canvas></div>
+          </div>
+          <div class="split">
+            <div class="canvas-wrap"><canvas id="equityChart"></canvas></div>
+            <div class="canvas-wrap"><canvas id="drawdownChart"></canvas></div>
           </div>
         </section>
 
@@ -318,6 +326,8 @@
       const STORE_KEY = "portfolio_api_base_url";
       let allocationChart;
       let pnlChart;
+      let equityChart;
+      let drawdownChart;
 
       function getBase() {
         const val = (localStorage.getItem(STORE_KEY) || "").trim();
@@ -328,8 +338,14 @@
         const p = new URLSearchParams();
         const snapshotDate = byId("snapshotDate").value;
         const account = byId("account").value.trim();
+        const lookbackDays = Number(byId("lookbackDays").value || 180);
         if (snapshotDate) p.set("snapshot_date", snapshotDate);
         if (account) p.set("account", account);
+        if (snapshotDate && lookbackDays > 0) {
+          const d = new Date(snapshotDate + "T00:00:00");
+          d.setDate(d.getDate() - lookbackDays);
+          p.set("start_date", d.toISOString().slice(0, 10));
+        }
         return p.toString();
       }
 
@@ -385,7 +401,7 @@
         }
       }
 
-      function renderCharts(rows) {
+      function renderCharts(rows, analytics) {
         const topByValue = [...rows]
           .map((r) => ({ symbol: r.symbol, value: num(r.market_value) }))
           .filter((x) => x.value > 0)
@@ -398,8 +414,12 @@
 
         const allocCtx = byId("allocationChart").getContext("2d");
         const pnlCtx = byId("pnlChart").getContext("2d");
+        const equityCtx = byId("equityChart").getContext("2d");
+        const drawdownCtx = byId("drawdownChart").getContext("2d");
         if (allocationChart) allocationChart.destroy();
         if (pnlChart) pnlChart.destroy();
+        if (equityChart) equityChart.destroy();
+        if (drawdownChart) drawdownChart.destroy();
 
         allocationChart = new Chart(allocCtx, {
           type: "doughnut",
@@ -427,6 +447,34 @@
             scales: { y: { beginAtZero: true } }
           }
         });
+
+        const labels = (analytics.series || []).map((p) => p.date);
+        const equity = (analytics.series || []).map((p) => p.market_value);
+        const drawdowns = (analytics.series || []).map((p) => p.drawdown * 100);
+
+        equityChart = new Chart(equityCtx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{ label: "Market Value", data: equity, borderColor: "#1f6feb", backgroundColor: "rgba(31,111,235,0.12)", fill: true }]
+          },
+          options: {
+            plugins: { title: { display: true, text: "Equity Curve" } },
+            scales: { y: { beginAtZero: false } }
+          }
+        });
+
+        drawdownChart = new Chart(drawdownCtx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{ label: "Drawdown %", data: drawdowns, borderColor: "#b42318", backgroundColor: "rgba(180,35,24,0.12)", fill: true }]
+          },
+          options: {
+            plugins: { title: { display: true, text: "Drawdown Curve" } },
+            scales: { y: { beginAtZero: false } }
+          }
+        });
       }
 
       async function loadData() {
@@ -439,9 +487,10 @@
         const posStatus = byId("positionsStatus");
         try {
           await refreshPrices();
-          const [metrics, positions] = await Promise.all([
+          const [metrics, positions, analytics] = await Promise.all([
             request(`/v1/metrics${qs ? `?${qs}` : ""}`),
             request(`/v1/positions${qs ? `?${qs}` : ""}`),
+            request(`/v1/analytics${qs ? `?${qs}` : ""}`),
           ]);
           const rows = positions.positions || [];
           const totalMkt = num(metrics.total_market_value);
@@ -453,6 +502,11 @@
             ["Cost Basis", fmt(metrics.total_cost_basis)],
             ["Unrealized PnL", fmt(metrics.total_unrealized_pnl)],
             ["Realized PnL", fmt(metrics.total_realized_pnl)],
+            ["Ann. Volatility", `${fmt((analytics.annualized_volatility || 0) * 100)}%`],
+            ["Sharpe Ratio", fmt(analytics.sharpe_ratio)],
+            ["Max Drawdown", `${fmt((analytics.max_drawdown || 0) * 100)}%`],
+            ["VaR 95 (daily)", `${fmt((analytics.var_95 || 0) * 100)}%`],
+            ["CVaR 95 (daily)", `${fmt((analytics.cvar_95 || 0) * 100)}%`],
           ].map(([k, v]) => `<div class="metric"><div class="k">${k}</div><div class="v ${cls(v)}">${v}</div></div>`).join("");
 
           const movers = rows
@@ -506,9 +560,10 @@
             largest ? `Biggest concentration is ${largest.symbol} at ${fmt(largestWeight)}% of priced market value.` : "No priced exposure yet.",
             unpricedCount > 0 ? `${unpricedCount} symbols have no price for the selected date.` : "All symbols are priced for the selected date.",
             totalMkt > 0 ? `Concentration warning threshold (35%) is ${largestWeight > 35 ? "breached" : "not breached"}.` : "Concentration check unavailable with zero priced market value.",
+            analytics.concentration_top_symbol ? `Risk concentration top name: ${analytics.concentration_top_symbol} (${fmt(analytics.concentration_top_weight * 100)}% weight).` : "Risk concentration not available.",
           ];
           insights.innerHTML = insightItems.map((x) => `<li>${x}</li>`).join("");
-          renderCharts(rows);
+          renderCharts(rows, analytics);
 
           body.innerHTML = positions.positions.map((p) => `
             <tr>
@@ -531,6 +586,8 @@
           insights.innerHTML = "";
           if (allocationChart) allocationChart.destroy();
           if (pnlChart) pnlChart.destroy();
+          if (equityChart) equityChart.destroy();
+          if (drawdownChart) drawdownChart.destroy();
           posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
         }
       }

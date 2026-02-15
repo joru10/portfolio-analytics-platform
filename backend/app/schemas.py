@@ -56,6 +56,29 @@ class MetricsResponse(BaseModel):
     net_exposure: Decimal
 
 
+class AnalyticsPointResponse(BaseModel):
+    date: date
+    market_value: float
+    total_pnl: float
+    daily_return: float
+    cumulative_return: float
+    drawdown: float
+
+
+class AnalyticsResponse(BaseModel):
+    snapshot_date: date
+    start_date: date
+    account_filter: str | None
+    annualized_volatility: float
+    sharpe_ratio: float
+    max_drawdown: float
+    var_95: float
+    cvar_95: float
+    concentration_top_symbol: str | None
+    concentration_top_weight: float
+    series: list[AnalyticsPointResponse]
+
+
 class PriceRefreshRequest(BaseModel):
     price_date: date | None = None
     symbols: list[str] = Field(default_factory=list)

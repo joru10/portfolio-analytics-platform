@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas import MetricsResponse, PositionItem, PositionsResponse
+from app.schemas import AnalyticsPointResponse, AnalyticsResponse, MetricsResponse, PositionItem, PositionsResponse
+from app.services.analytics import calculate_analytics
 from app.services.portfolio import calculate_positions
 
 router = APIRouter(prefix="/v1", tags=["portfolio"])
@@ -83,4 +84,44 @@ def get_metrics(
         total_realized_pnl=total_realized_pnl,
         gross_exposure=gross_exposure,
         net_exposure=net_exposure,
+    )
+
+
+@router.get("/analytics", response_model=AnalyticsResponse)
+def get_analytics(
+    snapshot_date: date | None = None,
+    start_date: date | None = None,
+    account: str | None = None,
+    db: Session = Depends(get_db),
+) -> AnalyticsResponse:
+    effective_snapshot = snapshot_date or date.today()
+    result = calculate_analytics(
+        db=db,
+        snapshot_date=effective_snapshot,
+        account=account,
+        start_date=start_date,
+    )
+
+    return AnalyticsResponse(
+        snapshot_date=result.snapshot_date,
+        start_date=result.start_date,
+        account_filter=result.account_filter,
+        annualized_volatility=result.annualized_volatility,
+        sharpe_ratio=result.sharpe_ratio,
+        max_drawdown=result.max_drawdown,
+        var_95=result.var_95,
+        cvar_95=result.cvar_95,
+        concentration_top_symbol=result.concentration_top_symbol,
+        concentration_top_weight=result.concentration_top_weight,
+        series=[
+            AnalyticsPointResponse(
+                date=point.date,
+                market_value=point.market_value,
+                total_pnl=point.total_pnl,
+                daily_return=point.daily_return,
+                cumulative_return=point.cumulative_return,
+                drawdown=point.drawdown,
+            )
+            for point in result.series
+        ],
     )
