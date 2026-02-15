@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     app_port: int = 8000
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portfolio"
+    market_data_provider: str = "demo"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

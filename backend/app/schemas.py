@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TradeImportRow(BaseModel):
@@ -54,3 +54,17 @@ class MetricsResponse(BaseModel):
     total_realized_pnl: Decimal
     gross_exposure: Decimal
     net_exposure: Decimal
+
+
+class PriceRefreshRequest(BaseModel):
+    price_date: date | None = None
+    symbols: list[str] = Field(default_factory=list)
+
+
+class PriceRefreshResponse(BaseModel):
+    provider: str
+    price_date: date
+    requested_count: int
+    processed_count: int
+    failed_symbols: list[str]
+    job_run_id: int
