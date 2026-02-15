@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Portfolio Analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
       :root {
         --bg: #f3f6fb;
@@ -93,6 +94,53 @@
         grid-template-columns: 1fr 1fr;
         gap: 12px;
       }
+      .header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 20px;
+      }
+      .header-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(4, 10, 20, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 50;
+      }
+      .modal.open { display: flex; }
+      .modal-panel {
+        width: min(560px, calc(100vw - 24px));
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+      }
+      .mini { font-size: 12px; color: var(--muted); }
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .links a {
+        text-decoration: none;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text);
+        background: #fff;
+      }
+      .canvas-wrap {
+        width: 100%;
+        min-height: 280px;
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -117,16 +165,24 @@
   </head>
   <body>
     <div class="wrap">
-      <h1>Portfolio Analytics</h1>
-      <div class="sub">Upload trades, refresh prices, and inspect positions/metrics.</div>
+      <div class="header-row">
+        <div>
+          <h1>Portfolio Analytics</h1>
+          <div class="sub">Upload trades, refresh prices, and inspect positions/metrics.</div>
+        </div>
+        <div class="header-actions">
+          <button id="openSettings" class="secondary">Settings</button>
+          <button id="runAll">Run Full Analysis</button>
+        </div>
+      </div>
 
       <div class="grid">
         <section class="card">
           <h3>Backend Connection</h3>
           <div class="row">
             <div>
-              <label for="apiBase">API Base URL</label>
-              <input id="apiBase" value="" placeholder="http://localhost:8000" />
+              <label>API Base URL (from Settings)</label>
+              <input id="apiBaseDisplay" value="" disabled />
             </div>
             <div>
               <label>&nbsp;</label>
@@ -146,6 +202,11 @@
 
         <section class="card">
           <h3>Trade Import</h3>
+          <div class="links" style="margin-bottom:10px;">
+            <a href="https://github.com/joru10/portfolio-analytics-platform/blob/main/sample-data/trades_seed.csv" target="_blank">Sample: seed CSV</a>
+            <a href="https://github.com/joru10/portfolio-analytics-platform/blob/main/sample-data/trades_incremental.csv" target="_blank">Sample: incremental CSV</a>
+            <a href="https://github.com/joru10/portfolio-analytics-platform/blob/main/sample-data/trades_seed.xlsx" target="_blank">Sample: seed XLSX</a>
+          </div>
           <div class="row">
             <div>
               <label for="tradeFile">CSV/XLSX File</label>
@@ -204,6 +265,14 @@
         </section>
 
         <section class="card">
+          <h3>Charts</h3>
+          <div class="split">
+            <div class="canvas-wrap"><canvas id="allocationChart"></canvas></div>
+            <div class="canvas-wrap"><canvas id="pnlChart"></canvas></div>
+          </div>
+        </section>
+
+        <section class="card">
           <h3>Positions</h3>
           <div style="overflow:auto;">
             <table>
@@ -220,14 +289,38 @@
       </div>
     </div>
 
+    <div id="settingsModal" class="modal" role="dialog" aria-modal="true">
+      <div class="modal-panel">
+        <h3 style="margin-top:0;">App Settings</h3>
+        <div class="mini" style="margin-bottom: 10px;">Stored in this browser so end users set once and forget.</div>
+        <div class="row">
+          <div style="grid-column: span 3;">
+            <label for="apiBaseInput">API Base URL</label>
+            <input id="apiBaseInput" placeholder="https://your-backend.example.com" />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="saveSettings">Save</button>
+          </div>
+        </div>
+        <div class="mini" style="margin-top:8px;">Example temporary URL: `https://cities-gps-maybe-menus.trycloudflare.com`</div>
+        <div style="display:flex; justify-content:flex-end; margin-top: 12px;">
+          <button id="closeSettings" class="secondary">Close</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       const byId = (id) => document.getElementById(id);
       const fmt = (v) => (v === null || v === undefined ? "-" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 }));
       const num = (v) => (v === null || v === undefined ? 0 : Number(v));
       const cls = (v) => (num(v) > 0 ? "pos" : num(v) < 0 ? "neg" : "");
+      const STORE_KEY = "portfolio_api_base_url";
+      let allocationChart;
+      let pnlChart;
 
       function getBase() {
-        const val = byId("apiBase").value.trim();
+        const val = (localStorage.getItem(STORE_KEY) || "").trim();
         return val || window.location.origin;
       }
 
@@ -285,9 +378,55 @@
             body: JSON.stringify({ price_date: snapshotDate, symbols: [] })
           });
           status.innerHTML = `Prices refreshed (${payload.processed_count}/${payload.requested_count}), failures: ${payload.failed_symbols.length}`;
+          return payload;
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
+          throw err;
         }
+      }
+
+      function renderCharts(rows) {
+        const topByValue = [...rows]
+          .map((r) => ({ symbol: r.symbol, value: num(r.market_value) }))
+          .filter((x) => x.value > 0)
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 7);
+
+        const pnlBySymbol = [...rows]
+          .map((r) => ({ symbol: r.symbol, pnl: num(r.unrealized_pnl) + num(r.realized_pnl) }))
+          .sort((a, b) => b.pnl - a.pnl);
+
+        const allocCtx = byId("allocationChart").getContext("2d");
+        const pnlCtx = byId("pnlChart").getContext("2d");
+        if (allocationChart) allocationChart.destroy();
+        if (pnlChart) pnlChart.destroy();
+
+        allocationChart = new Chart(allocCtx, {
+          type: "doughnut",
+          data: {
+            labels: topByValue.map((x) => x.symbol),
+            datasets: [{ data: topByValue.map((x) => x.value) }]
+          },
+          options: {
+            plugins: { title: { display: true, text: "Top Exposure Allocation" } }
+          }
+        });
+
+        pnlChart = new Chart(pnlCtx, {
+          type: "bar",
+          data: {
+            labels: pnlBySymbol.map((x) => x.symbol),
+            datasets: [{
+              label: "Total PnL",
+              data: pnlBySymbol.map((x) => x.pnl),
+              backgroundColor: pnlBySymbol.map((x) => x.pnl >= 0 ? "#0f8f3c" : "#b42318")
+            }]
+          },
+          options: {
+            plugins: { title: { display: true, text: "PnL by Symbol" } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
       }
 
       async function loadData() {
@@ -366,8 +505,10 @@
             top ? `Largest PnL mover is ${top.symbol} at ${fmt(top.totalPnl)}.` : "No movers available yet.",
             largest ? `Biggest concentration is ${largest.symbol} at ${fmt(largestWeight)}% of priced market value.` : "No priced exposure yet.",
             unpricedCount > 0 ? `${unpricedCount} symbols have no price for the selected date.` : "All symbols are priced for the selected date.",
+            totalMkt > 0 ? `Concentration warning threshold (35%) is ${largestWeight > 35 ? "breached" : "not breached"}.` : "Concentration check unavailable with zero priced market value.",
           ];
           insights.innerHTML = insightItems.map((x) => `<li>${x}</li>`).join("");
+          renderCharts(rows);
 
           body.innerHTML = positions.positions.map((p) => `
             <tr>
@@ -388,21 +529,51 @@
           moversBody.innerHTML = "";
           accountsBody.innerHTML = "";
           insights.innerHTML = "";
+          if (allocationChart) allocationChart.destroy();
+          if (pnlChart) pnlChart.destroy();
           posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
         }
+      }
+
+      function syncSettingsUi() {
+        const base = getBase();
+        byId("apiBaseDisplay").value = base;
+        byId("apiBaseInput").value = localStorage.getItem(STORE_KEY) || "";
+      }
+
+      function openSettings() {
+        byId("settingsModal").classList.add("open");
+        syncSettingsUi();
+      }
+
+      function closeSettings() {
+        byId("settingsModal").classList.remove("open");
+      }
+
+      function saveSettings() {
+        const val = byId("apiBaseInput").value.trim();
+        if (val) localStorage.setItem(STORE_KEY, val);
+        else localStorage.removeItem(STORE_KEY);
+        syncSettingsUi();
+        closeSettings();
       }
 
       byId("checkHealth").addEventListener("click", checkHealth);
       byId("importTrades").addEventListener("click", importTrades);
       byId("refreshPrices").addEventListener("click", refreshPrices);
       byId("loadData").addEventListener("click", loadData);
+      byId("runAll").addEventListener("click", loadData);
+      byId("openSettings").addEventListener("click", openSettings);
+      byId("closeSettings").addEventListener("click", closeSettings);
+      byId("saveSettings").addEventListener("click", saveSettings);
 
       byId("snapshotDate").value = new Date().toISOString().slice(0, 10);
-      if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
-        byId("apiBase").value = "";
-      } else {
-        byId("apiBase").value = window.location.origin.includes(":8000") ? "" : "http://localhost:8000";
+      if (!localStorage.getItem(STORE_KEY)) {
+        if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+          if (!window.location.origin.includes(":8000")) localStorage.setItem(STORE_KEY, "http://localhost:8000");
+        }
       }
+      syncSettingsUi();
     </script>
   </body>
 </html>
