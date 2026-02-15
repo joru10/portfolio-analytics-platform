@@ -1,0 +1,2 @@
+account,symbol,trade_date,side,quantity,price,fees,currency,broker_ref
+ACC_MAIN,AAPL,2026-02-15,BUY,10,190.25,1.00,USD,BRK-EXAMPLE-001
