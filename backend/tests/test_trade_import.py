@@ -29,3 +29,14 @@ ACC1,AAPL,2026-02-14,HOLD,10,185.5
 
     assert response.status_code == 422
     assert "BUY or SELL" in response.json()["detail"]
+
+
+def test_import_trades_missing_fields_error_is_deterministic(client) -> None:
+    bad_csv = """account,symbol,trade_date,side,quantity,price
+ACC1,,2026-02-14,BUY,,185.5
+"""
+
+    response = client.post("/v1/trades/import", files={"file": ("missing.csv", bad_csv, "text/csv")})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Row 2: missing required fields: quantity, symbol"
