@@ -9,7 +9,7 @@ from app.models import Base
 
 
 @pytest.fixture()
-def client():
+def db_session_factory():
     engine = create_engine(
         "sqlite+pysqlite://",
         future=True,
@@ -19,8 +19,24 @@ def client():
     TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
     Base.metadata.create_all(bind=engine)
 
+    yield TestingSessionLocal
+
+    engine.dispose()
+
+
+@pytest.fixture()
+def db_session(db_session_factory):
+    db = db_session_factory()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture()
+def client(db_session_factory):
     def override_get_db():
-        db = TestingSessionLocal()
+        db = db_session_factory()
         try:
             yield db
         finally:
