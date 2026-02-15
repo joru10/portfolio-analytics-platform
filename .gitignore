@@ -21,3 +21,6 @@ dist/
 build/
 coverage/
 htmlcov/
+
+# Python packaging metadata
+*.egg-info/

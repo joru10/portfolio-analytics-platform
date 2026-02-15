@@ -1,9 +1,0 @@
-pyproject.toml
-app/__init__.py
-app/main.py
-portfolio_backend.egg-info/PKG-INFO
-portfolio_backend.egg-info/SOURCES.txt
-portfolio_backend.egg-info/dependency_links.txt
-portfolio_backend.egg-info/requires.txt
-portfolio_backend.egg-info/top_level.txt
-tests/test_health.py
