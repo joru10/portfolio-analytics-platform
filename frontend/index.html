@@ -79,6 +79,20 @@
       }
       .metric .k { font-size: 11px; color: var(--muted); }
       .metric .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+      .metric .v.pos { color: var(--ok); }
+      .metric .v.neg { color: #b42318; }
+      .insight-list {
+        margin: 0;
+        padding-left: 18px;
+      }
+      .insight-list li {
+        margin: 6px 0;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -94,10 +108,10 @@
       .ok { color: var(--ok); }
       .warn { color: var(--warn); }
       @media (max-width: 1000px) {
-        .row, .metrics { grid-template-columns: 1fr 1fr; }
+        .row, .metrics, .split { grid-template-columns: 1fr 1fr; }
       }
       @media (max-width: 640px) {
-        .row, .metrics { grid-template-columns: 1fr; }
+        .row, .metrics, .split { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -120,7 +134,7 @@
             </div>
             <div>
               <label>&nbsp;</label>
-              <button id="loadData">Load Positions + Metrics</button>
+              <button id="loadData">Run Analysis</button>
             </div>
             <div>
               <label>&nbsp;</label>
@@ -159,6 +173,37 @@
         </section>
 
         <section class="card">
+          <h3>Insights</h3>
+          <ul id="insights" class="insight-list"></ul>
+        </section>
+
+        <section class="card">
+          <h3>Analysis Breakdown</h3>
+          <div class="split">
+            <div style="overflow:auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Top Movers</th><th>Total PnL</th><th>Mkt Value</th><th>Weight %</th>
+                  </tr>
+                </thead>
+                <tbody id="moversBody"></tbody>
+              </table>
+            </div>
+            <div style="overflow:auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Account</th><th>Mkt Value</th><th>Unrealized</th><th>Realized</th>
+                  </tr>
+                </thead>
+                <tbody id="accountsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
           <h3>Positions</h3>
           <div style="overflow:auto;">
             <table>
@@ -178,6 +223,8 @@
     <script>
       const byId = (id) => document.getElementById(id);
       const fmt = (v) => (v === null || v === undefined ? "-" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 }));
+      const num = (v) => (v === null || v === undefined ? 0 : Number(v));
+      const cls = (v) => (num(v) > 0 ? "pos" : num(v) < 0 ? "neg" : "");
 
       function getBase() {
         const val = byId("apiBase").value.trim();
@@ -222,7 +269,7 @@
         form.append("file", file);
         try {
           const payload = await request("/v1/trades/import", { method: "POST", body: form });
-          status.innerHTML = `Imported ${payload.imported_rows}/${payload.total_rows} rows, duplicates: ${payload.duplicate_rows}`;
+          status.innerHTML = `Imported ${payload.imported_rows}/${payload.total_rows} rows, duplicates: ${payload.duplicate_rows}. Run Analysis next.`;
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
         }
@@ -247,12 +294,19 @@
         const qs = queryParams();
         const metricsNode = byId("metrics");
         const body = byId("positionsBody");
+        const moversBody = byId("moversBody");
+        const accountsBody = byId("accountsBody");
+        const insights = byId("insights");
         const posStatus = byId("positionsStatus");
         try {
+          await refreshPrices();
           const [metrics, positions] = await Promise.all([
             request(`/v1/metrics${qs ? `?${qs}` : ""}`),
             request(`/v1/positions${qs ? `?${qs}` : ""}`),
           ]);
+          const rows = positions.positions || [];
+          const totalMkt = num(metrics.total_market_value);
+          const unpricedCount = rows.filter((r) => r.market_price === null).length;
 
           metricsNode.innerHTML = [
             ["Total Positions", metrics.total_positions],
@@ -260,7 +314,60 @@
             ["Cost Basis", fmt(metrics.total_cost_basis)],
             ["Unrealized PnL", fmt(metrics.total_unrealized_pnl)],
             ["Realized PnL", fmt(metrics.total_realized_pnl)],
-          ].map(([k, v]) => `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+          ].map(([k, v]) => `<div class="metric"><div class="k">${k}</div><div class="v ${cls(v)}">${v}</div></div>`).join("");
+
+          const movers = rows
+            .map((r) => {
+              const totalPnl = num(r.unrealized_pnl) + num(r.realized_pnl);
+              const market = num(r.market_value);
+              const weight = totalMkt > 0 ? (market / totalMkt) * 100 : 0;
+              return { symbol: r.symbol, totalPnl, market, weight };
+            })
+            .sort((a, b) => Math.abs(b.totalPnl) - Math.abs(a.totalPnl))
+            .slice(0, 6);
+
+          moversBody.innerHTML = movers.map((m) => `
+            <tr>
+              <td>${m.symbol}</td>
+              <td class="${cls(m.totalPnl)}">${fmt(m.totalPnl)}</td>
+              <td>${fmt(m.market)}</td>
+              <td>${fmt(m.weight)}</td>
+            </tr>
+          `).join("");
+
+          const byAccount = {};
+          for (const r of rows) {
+            byAccount[r.account] = byAccount[r.account] || { market: 0, unrealized: 0, realized: 0 };
+            byAccount[r.account].market += num(r.market_value);
+            byAccount[r.account].unrealized += num(r.unrealized_pnl);
+            byAccount[r.account].realized += num(r.realized_pnl);
+          }
+          accountsBody.innerHTML = Object.entries(byAccount)
+            .sort((a, b) => b[1].market - a[1].market)
+            .map(([account, v]) => `
+              <tr>
+                <td>${account}</td>
+                <td>${fmt(v.market)}</td>
+                <td class="${cls(v.unrealized)}">${fmt(v.unrealized)}</td>
+                <td class="${cls(v.realized)}">${fmt(v.realized)}</td>
+              </tr>
+            `).join("");
+
+          const largest = rows
+            .map((r) => ({ symbol: r.symbol, market: num(r.market_value) }))
+            .sort((a, b) => b.market - a.market)[0];
+          const largestWeight = largest && totalMkt > 0 ? (largest.market / totalMkt) * 100 : 0;
+          const pnlTotal = num(metrics.total_unrealized_pnl) + num(metrics.total_realized_pnl);
+          const top = movers[0];
+
+          const insightItems = [
+            `Snapshot ${positions.snapshot_date}: ${rows.length} positions analyzed across ${Object.keys(byAccount).length} accounts.`,
+            `Portfolio total PnL is ${fmt(pnlTotal)} (${fmt(metrics.total_unrealized_pnl)} unrealized + ${fmt(metrics.total_realized_pnl)} realized).`,
+            top ? `Largest PnL mover is ${top.symbol} at ${fmt(top.totalPnl)}.` : "No movers available yet.",
+            largest ? `Biggest concentration is ${largest.symbol} at ${fmt(largestWeight)}% of priced market value.` : "No priced exposure yet.",
+            unpricedCount > 0 ? `${unpricedCount} symbols have no price for the selected date.` : "All symbols are priced for the selected date.",
+          ];
+          insights.innerHTML = insightItems.map((x) => `<li>${x}</li>`).join("");
 
           body.innerHTML = positions.positions.map((p) => `
             <tr>
@@ -278,6 +385,9 @@
         } catch (err) {
           metricsNode.innerHTML = "";
           body.innerHTML = "";
+          moversBody.innerHTML = "";
+          accountsBody.innerHTML = "";
+          insights.innerHTML = "";
           posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
         }
       }
