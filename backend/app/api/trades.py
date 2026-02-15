@@ -1,7 +1,7 @@
 import csv
 import hashlib
 import io
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -180,6 +180,7 @@ def import_trades(file: UploadFile = File(...), db: Session = Depends(get_db)) -
                 currency=row.currency,
                 broker_ref=row.broker_ref,
                 source_file=file.filename,
+                imported_at=datetime.now(UTC),
             )
         )
 

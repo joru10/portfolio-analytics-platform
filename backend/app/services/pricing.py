@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ def refresh_prices(db: Session, price_date: date, symbols: list[str] | None = No
     job_run = JobRun(
         job_name="price_refresh",
         status="RUNNING",
+        started_at=datetime.now(UTC),
         rows_processed=0,
         run_details=json.dumps(
             {
@@ -77,6 +78,7 @@ def refresh_prices(db: Session, price_date: date, symbols: list[str] | None = No
                     close_price=point.close_price,
                     currency=point.currency,
                     source=provider_name,
+                    ingested_at=datetime.now(UTC),
                 )
             )
         processed += 1
