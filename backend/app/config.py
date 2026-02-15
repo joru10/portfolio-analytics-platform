@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/portfolio"
     market_data_provider: str = "demo"
+    cors_allow_origins: str = "http://localhost:8000,http://localhost:5173"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

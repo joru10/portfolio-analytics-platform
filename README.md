@@ -21,6 +21,8 @@ make run
 ```
 
 API health: `http://localhost:8000/health`
+UI: `http://localhost:8000/`
+OpenAPI docs: `http://localhost:8000/docs`
 
 ## Local DB and Migrations
 
@@ -37,6 +39,11 @@ make db-down
 3. Positions, PnL, risk metrics endpoints
 4. Dashboard + Excel export parity checks
 5. Auth, audit trail, and scheduled jobs
+
+## Guides
+
+- End-user setup and usage: `docs/user-guide.md`
+- Deployment options: `docs/deployment-guide.md`
 
 ## Codex Workflow
 

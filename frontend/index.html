@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Portfolio Analytics</title>
+    <style>
+      :root {
+        --bg: #f3f6fb;
+        --surface: #ffffff;
+        --text: #0b1321;
+        --muted: #5a687d;
+        --accent: #1f6feb;
+        --ok: #0f8f3c;
+        --warn: #c97400;
+        --border: #d9e1ec;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        color: var(--text);
+        background: linear-gradient(180deg, #f7f9fd 0%, #edf3fb 100%);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      h1 { margin: 0 0 8px; font-size: 30px; }
+      .sub { color: var(--muted); margin-bottom: 20px; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 16px;
+      }
+      .card {
+        grid-column: span 12;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+      label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 6px; }
+      input, select, button {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        min-height: 40px;
+        padding: 8px 10px;
+        font-size: 14px;
+      }
+      button {
+        background: var(--accent);
+        color: white;
+        border-color: var(--accent);
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button.secondary {
+        background: white;
+        color: var(--text);
+        border-color: var(--border);
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .metric {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .metric .k { font-size: 11px; color: var(--muted); }
+      .metric .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th, td {
+        border-bottom: 1px solid var(--border);
+        padding: 8px 6px;
+        text-align: left;
+      }
+      th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.02em; }
+      .status { font-size: 13px; color: var(--muted); margin-top: 10px; }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      @media (max-width: 1000px) {
+        .row, .metrics { grid-template-columns: 1fr 1fr; }
+      }
+      @media (max-width: 640px) {
+        .row, .metrics { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Portfolio Analytics</h1>
+      <div class="sub">Upload trades, refresh prices, and inspect positions/metrics.</div>
+
+      <div class="grid">
+        <section class="card">
+          <h3>Backend Connection</h3>
+          <div class="row">
+            <div>
+              <label for="apiBase">API Base URL</label>
+              <input id="apiBase" value="" placeholder="http://localhost:8000" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="checkHealth" class="secondary">Check Health</button>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="loadData">Load Positions + Metrics</button>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="refreshPrices" class="secondary">Refresh Prices</button>
+            </div>
+          </div>
+          <div id="connStatus" class="status">Not checked yet.</div>
+        </section>
+
+        <section class="card">
+          <h3>Trade Import</h3>
+          <div class="row">
+            <div>
+              <label for="tradeFile">CSV/XLSX File</label>
+              <input id="tradeFile" type="file" accept=".csv,.xlsx" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="importTrades">Import Trades</button>
+            </div>
+            <div>
+              <label for="snapshotDate">Snapshot Date</label>
+              <input id="snapshotDate" type="date" />
+            </div>
+            <div>
+              <label for="account">Account (optional)</label>
+              <input id="account" placeholder="ACC1" />
+            </div>
+          </div>
+          <div id="importStatus" class="status"></div>
+        </section>
+
+        <section class="card">
+          <h3>Metrics</h3>
+          <div id="metrics" class="metrics"></div>
+        </section>
+
+        <section class="card">
+          <h3>Positions</h3>
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Account</th><th>Symbol</th><th>Qty</th><th>Avg Cost</th><th>Mkt Price</th><th>Mkt Value</th><th>Unrealized</th><th>Realized</th>
+                </tr>
+              </thead>
+              <tbody id="positionsBody"></tbody>
+            </table>
+          </div>
+          <div id="positionsStatus" class="status"></div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const byId = (id) => document.getElementById(id);
+      const fmt = (v) => (v === null || v === undefined ? "-" : Number(v).toLocaleString(undefined, { maximumFractionDigits: 4 }));
+
+      function getBase() {
+        const val = byId("apiBase").value.trim();
+        return val || window.location.origin;
+      }
+
+      function queryParams() {
+        const p = new URLSearchParams();
+        const snapshotDate = byId("snapshotDate").value;
+        const account = byId("account").value.trim();
+        if (snapshotDate) p.set("snapshot_date", snapshotDate);
+        if (account) p.set("account", account);
+        return p.toString();
+      }
+
+      async function request(path, options = {}) {
+        const url = `${getBase()}${path}`;
+        const res = await fetch(url, options);
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `Request failed: ${res.status}`);
+        return body;
+      }
+
+      async function checkHealth() {
+        const node = byId("connStatus");
+        try {
+          const health = await request("/health");
+          node.innerHTML = `Health: <span class="ok">${health.status}</span>`;
+        } catch (err) {
+          node.innerHTML = `<span class="warn">${err.message}</span>`;
+        }
+      }
+
+      async function importTrades() {
+        const status = byId("importStatus");
+        const file = byId("tradeFile").files[0];
+        if (!file) {
+          status.innerHTML = '<span class="warn">Choose a trade file first.</span>';
+          return;
+        }
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          const payload = await request("/v1/trades/import", { method: "POST", body: form });
+          status.innerHTML = `Imported ${payload.imported_rows}/${payload.total_rows} rows, duplicates: ${payload.duplicate_rows}`;
+        } catch (err) {
+          status.innerHTML = `<span class="warn">${err.message}</span>`;
+        }
+      }
+
+      async function refreshPrices() {
+        const status = byId("connStatus");
+        const snapshotDate = byId("snapshotDate").value || new Date().toISOString().slice(0, 10);
+        try {
+          const payload = await request("/v1/prices/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ price_date: snapshotDate, symbols: [] })
+          });
+          status.innerHTML = `Prices refreshed (${payload.processed_count}/${payload.requested_count}), failures: ${payload.failed_symbols.length}`;
+        } catch (err) {
+          status.innerHTML = `<span class="warn">${err.message}</span>`;
+        }
+      }
+
+      async function loadData() {
+        const qs = queryParams();
+        const metricsNode = byId("metrics");
+        const body = byId("positionsBody");
+        const posStatus = byId("positionsStatus");
+        try {
+          const [metrics, positions] = await Promise.all([
+            request(`/v1/metrics${qs ? `?${qs}` : ""}`),
+            request(`/v1/positions${qs ? `?${qs}` : ""}`),
+          ]);
+
+          metricsNode.innerHTML = [
+            ["Total Positions", metrics.total_positions],
+            ["Market Value", fmt(metrics.total_market_value)],
+            ["Cost Basis", fmt(metrics.total_cost_basis)],
+            ["Unrealized PnL", fmt(metrics.total_unrealized_pnl)],
+            ["Realized PnL", fmt(metrics.total_realized_pnl)],
+          ].map(([k, v]) => `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+          body.innerHTML = positions.positions.map((p) => `
+            <tr>
+              <td>${p.account}</td>
+              <td>${p.symbol}</td>
+              <td>${fmt(p.quantity)}</td>
+              <td>${fmt(p.avg_cost)}</td>
+              <td>${fmt(p.market_price)}</td>
+              <td>${fmt(p.market_value)}</td>
+              <td>${fmt(p.unrealized_pnl)}</td>
+              <td>${fmt(p.realized_pnl)}</td>
+            </tr>
+          `).join("");
+          posStatus.textContent = `Snapshot ${positions.snapshot_date}. Rows: ${positions.positions.length}.`;
+        } catch (err) {
+          metricsNode.innerHTML = "";
+          body.innerHTML = "";
+          posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
+        }
+      }
+
+      byId("checkHealth").addEventListener("click", checkHealth);
+      byId("importTrades").addEventListener("click", importTrades);
+      byId("refreshPrices").addEventListener("click", refreshPrices);
+      byId("loadData").addEventListener("click", loadData);
+
+      byId("snapshotDate").value = new Date().toISOString().slice(0, 10);
+      if (window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        byId("apiBase").value = "";
+      } else {
+        byId("apiBase").value = window.location.origin.includes(":8000") ? "" : "http://localhost:8000";
+      }
+    </script>
+  </body>
+</html>

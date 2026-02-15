@@ -1,8 +1,14 @@
-# Frontend Placeholder
+# Frontend
 
-Planned stack: React + Vite + TypeScript.
+Current frontend is a static dashboard in `index.html`.
 
-Next step:
-- Initialize app shell
-- Connect `/v1/positions` and `/v1/metrics`
-- Add charting and export actions
+Capabilities:
+- Upload trades
+- Refresh prices
+- Load metrics and positions
+- Set API base URL, snapshot date, and account filter
+
+Local run:
+- Backend serves this UI at `http://localhost:8000/`
+
+If hosting separately (for example Netlify), point `API Base URL` to your deployed backend.
