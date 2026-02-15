@@ -13,8 +13,21 @@ Production-oriented portfolio analytics app inspired by spreadsheet-first workfl
 ## Quickstart
 
 ```bash
+cp .env.example backend/.env
 make bootstrap
+make db-up
+make migrate
 make run
+```
+
+API health: `http://localhost:8000/health`
+
+## Local DB and Migrations
+
+```bash
+make db-up
+make migrate
+make db-down
 ```
 
 ## Initial Roadmap
