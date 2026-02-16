@@ -140,6 +140,12 @@
       .canvas-wrap {
         width: 100%;
         min-height: 280px;
+        height: 320px;
+        position: relative;
+      }
+      .canvas-wrap canvas {
+        width: 100% !important;
+        height: 100% !important;
       }
       table {
         width: 100%;
@@ -177,7 +183,7 @@
       </div>
 
       <div class="grid">
-        <section id="compareSection" class="card">
+        <section class="card">
           <h3>Backend Connection</h3>
           <div class="row">
             <div>
@@ -284,7 +290,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section id="compareSection" class="card">
           <h3>Company Compare (No Upload Required)</h3>
           <div class="mini" style="margin-bottom: 10px;">
             Uses symbols from Settings -> Companies to Follow and fetches historical prices via selected providers.
@@ -302,6 +308,24 @@
               </thead>
               <tbody id="compareBody"></tbody>
             </table>
+          </div>
+          <div class="split" style="margin-top: 12px;">
+            <div style="overflow:auto;">
+              <table>
+                <thead>
+                  <tr><th>Leaderboard</th><th>Return %</th><th>Ann. Vol %</th><th>Max DD %</th></tr>
+                </thead>
+                <tbody id="leaderboardBody"></tbody>
+              </table>
+            </div>
+            <div style="overflow:auto;">
+              <table>
+                <thead>
+                  <tr><th>Pair</th><th>Correlation</th></tr>
+                </thead>
+                <tbody id="correlationBody"></tbody>
+              </table>
+            </div>
           </div>
           <div id="compareStatus" class="status"></div>
         </section>
@@ -542,6 +566,8 @@
         const series = payload.series || [];
         const summary = payload.summary || [];
         const compareBody = byId("compareBody");
+        const leaderboardBody = byId("leaderboardBody");
+        const correlationBody = byId("correlationBody");
         const compareStatus = byId("compareStatus");
         const connStatus = byId("connStatus");
         const metricsNode = byId("metrics");
@@ -560,6 +586,34 @@
             </tr>
           `)
           .join("");
+
+        leaderboardBody.innerHTML = [...summary]
+          .sort((a, b) => (b.return_pct || 0) - (a.return_pct || 0))
+          .map((s) => `
+            <tr>
+              <td>${s.symbol}</td>
+              <td class="${cls((s.return_pct || 0) * 100)}">${fmt((s.return_pct || 0) * 100)}</td>
+              <td>${fmt((s.annualized_volatility || 0) * 100)}</td>
+              <td class="${cls((s.max_drawdown || 0) * 100)}">${fmt((s.max_drawdown || 0) * 100)}</td>
+            </tr>
+          `)
+          .join("");
+
+        const pairs = [];
+        const corr = payload.correlation || {};
+        for (const left of symbols) {
+          for (const right of symbols) {
+            if (left >= right) continue;
+            const value = corr[left] && corr[left][right] !== undefined ? corr[left][right] : null;
+            pairs.push({ pair: `${left} vs ${right}`, value });
+          }
+        }
+        correlationBody.innerHTML = pairs.length
+          ? pairs
+              .sort((a, b) => Math.abs(num(b.value)) - Math.abs(num(a.value)))
+              .map((p) => `<tr><td>${p.pair}</td><td>${fmt(p.value)}</td></tr>`)
+              .join("")
+          : `<tr><td colspan="2">Not enough symbols for pairwise correlation.</td></tr>`;
 
         const labels = series.map((p) => p.date);
         const normalizedCtx = byId("compareNormalizedChart").getContext("2d");
@@ -608,6 +662,8 @@
           const msg = `No price history returned for the selected symbols/providers/date range. Failed: ${payload.failed_symbols.join(", ") || "n/a"}.`;
           compareStatus.innerHTML = `<span class="warn">${msg}</span>`;
           connStatus.innerHTML = `<span class="warn">${msg}</span>`;
+          leaderboardBody.innerHTML = "";
+          correlationBody.innerHTML = "";
           return;
         }
 
