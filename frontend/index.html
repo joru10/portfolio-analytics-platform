@@ -378,6 +378,23 @@
         </section>
 
         <section class="card">
+          <h3>AI Analyst</h3>
+          <div class="mini">Ask the configured LLM to explain current compare/portfolio context and risks.</div>
+          <div class="row" style="margin-top: 10px;">
+            <div style="grid-column: span 3;">
+              <label for="aiQuestion">Question</label>
+              <input id="aiQuestion" placeholder="What are the top risks and what should I check next?" />
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="runAIExplain">Analyze with AI</button>
+            </div>
+          </div>
+          <div id="aiStatus" class="status"></div>
+          <div style="margin-top: 10px; white-space: pre-wrap; font-size: 14px;" id="aiAnswer"></div>
+        </section>
+
+        <section class="card">
           <h3>Positions</h3>
           <div style="overflow:auto;">
             <table>
@@ -419,6 +436,19 @@
           </div>
         </div>
         <div class="row" style="margin-top: 10px;">
+          <div style="grid-column: span 2;">
+            <label for="aiProviderInput">AI Provider</label>
+            <select id="aiProviderInput">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+          </div>
+          <div style="grid-column: span 2;">
+            <label for="aiModelInput">AI Model</label>
+            <input id="aiModelInput" placeholder="gpt-5-mini or claude-3-5-sonnet-20241022" />
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
           <div style="grid-column: span 3;">
             <label for="symbolSearchInput">Stock Code Search (company name or ticker)</label>
             <input id="symbolSearchInput" placeholder="Blaize, Apple, Nvidia..." />
@@ -445,6 +475,8 @@
       const STORE_KEY = "portfolio_api_base_url";
       const STORE_PROVIDERS_KEY = "portfolio_providers";
       const STORE_FOLLOWED_KEY = "portfolio_followed_symbols";
+      const STORE_AI_PROVIDER_KEY = "portfolio_ai_provider";
+      const STORE_AI_MODEL_KEY = "portfolio_ai_model";
       const BENCHMARK_SYMBOL = "SPY";
       let allocationChart;
       let pnlChart;
@@ -454,6 +486,8 @@
       let compareReturnChart;
       let rollingVolChart;
       let relativeStrengthChart;
+      let lastComparePayload = null;
+      let lastPortfolioPayload = null;
 
       function getBase() {
         const val = (localStorage.getItem(STORE_KEY) || "").trim();
@@ -565,6 +599,17 @@
           .split(",")
           .map((x) => x.trim().toUpperCase())
           .filter(Boolean);
+      }
+
+      function getAIProvider() {
+        const p = (localStorage.getItem(STORE_AI_PROVIDER_KEY) || "openai").trim().toLowerCase();
+        return p === "anthropic" ? "anthropic" : "openai";
+      }
+
+      function getAIModel() {
+        const stored = (localStorage.getItem(STORE_AI_MODEL_KEY) || "").trim();
+        if (stored) return stored;
+        return getAIProvider() === "anthropic" ? "claude-3-5-sonnet-20241022" : "gpt-5-mini";
       }
 
       function renderCharts(rows, analytics) {
@@ -882,6 +927,7 @@
       }
 
       function renderCompanyCompare(payload) {
+        lastComparePayload = payload;
         const symbols = payload.symbols || [];
         const trackedSymbols = symbols.filter((s) => s !== BENCHMARK_SYMBOL);
         const series = payload.series || [];
@@ -1089,6 +1135,7 @@
             request(`/v1/positions${qs ? `?${qs}` : ""}`),
             request(`/v1/analytics${qs ? `?${qs}` : ""}`),
           ]);
+          lastPortfolioPayload = { metrics, positions, analytics };
           const followedSet = new Set(getFollowedSymbols());
           const allRows = positions.positions || [];
           const rows = followedSet.size ? allRows.filter((r) => followedSet.has(String(r.symbol).toUpperCase())) : allRows;
@@ -1238,12 +1285,58 @@
         byId("symbolSearchStatus").innerHTML = `Added ${symbol.toUpperCase()} to followed symbols.`;
       }
 
+      function getAIContextPayload() {
+        if (lastComparePayload) {
+          return { context_type: "compare", context: lastComparePayload };
+        }
+        if (lastPortfolioPayload) {
+          return { context_type: "portfolio", context: lastPortfolioPayload };
+        }
+        return { context_type: "empty", context: { note: "No compare or portfolio data loaded yet." } };
+      }
+
+      async function runAIExplain() {
+        const status = byId("aiStatus");
+        const answerNode = byId("aiAnswer");
+        const question = byId("aiQuestion").value.trim();
+        if (question.length < 5) {
+          status.innerHTML = '<span class="warn">Please enter a more specific question (5+ chars).</span>';
+          return;
+        }
+
+        const provider = getAIProvider();
+        const model = getAIModel();
+        const contextPayload = getAIContextPayload();
+        try {
+          status.textContent = `Running AI analysis with ${provider}/${model}...`;
+          answerNode.textContent = "";
+          const payload = await request("/v1/ai/explain", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              question,
+              provider,
+              model,
+              context_type: contextPayload.context_type,
+              context: contextPayload.context,
+              max_tokens: 700,
+            }),
+          });
+          status.innerHTML = `AI response ready from ${payload.provider}/${payload.model}.`;
+          answerNode.textContent = payload.answer || "(No response text)";
+        } catch (err) {
+          status.innerHTML = `<span class=\"warn\">${err.message}</span>`;
+        }
+      }
+
       function syncSettingsUi() {
         const base = getBase();
         byId("apiBaseDisplay").value = base;
         byId("apiBaseInput").value = localStorage.getItem(STORE_KEY) || "";
         byId("providersInput").value = getSelectedProviders().join(", ");
         byId("followedInput").value = getFollowedSymbols().join(", ");
+        byId("aiProviderInput").value = getAIProvider();
+        byId("aiModelInput").value = getAIModel();
       }
 
       function openSettings() {
@@ -1261,12 +1354,18 @@
         const val = byId("apiBaseInput").value.trim();
         const providersVal = byId("providersInput").value.trim();
         const followedVal = byId("followedInput").value.trim();
+        const aiProviderVal = byId("aiProviderInput").value.trim().toLowerCase();
+        const aiModelVal = byId("aiModelInput").value.trim();
         if (val) localStorage.setItem(STORE_KEY, val);
         else localStorage.removeItem(STORE_KEY);
         if (providersVal) localStorage.setItem(STORE_PROVIDERS_KEY, providersVal);
         else localStorage.removeItem(STORE_PROVIDERS_KEY);
         if (followedVal) localStorage.setItem(STORE_FOLLOWED_KEY, followedVal);
         else localStorage.removeItem(STORE_FOLLOWED_KEY);
+        if (aiProviderVal) localStorage.setItem(STORE_AI_PROVIDER_KEY, aiProviderVal);
+        else localStorage.removeItem(STORE_AI_PROVIDER_KEY);
+        if (aiModelVal) localStorage.setItem(STORE_AI_MODEL_KEY, aiModelVal);
+        else localStorage.removeItem(STORE_AI_MODEL_KEY);
         syncSettingsUi();
         closeSettings();
       }
@@ -1294,6 +1393,7 @@
       byId("closeSettings").addEventListener("click", closeSettings);
       byId("saveSettings").addEventListener("click", saveSettings);
       byId("runSymbolSearch").addEventListener("click", runSymbolSearch);
+      byId("runAIExplain").addEventListener("click", runAIExplain);
       byId("symbolSearchInput").addEventListener("keydown", async (evt) => {
         if (evt.key === "Enter") {
           evt.preventDefault();
@@ -1316,6 +1416,8 @@
         }
       }
       if (!localStorage.getItem(STORE_PROVIDERS_KEY)) localStorage.setItem(STORE_PROVIDERS_KEY, "demo, yfinance");
+      if (!localStorage.getItem(STORE_AI_PROVIDER_KEY)) localStorage.setItem(STORE_AI_PROVIDER_KEY, "openai");
+      if (!localStorage.getItem(STORE_AI_MODEL_KEY)) localStorage.setItem(STORE_AI_MODEL_KEY, "gpt-5-mini");
       syncSettingsUi();
       renderPortfolioPlaceholders("Portfolio sections require imported trades. Use Compare Companies for market-only analytics.");
     </script>

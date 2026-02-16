@@ -4,6 +4,7 @@
 - Trade import (`.csv`/`.xlsx`)
 - Provider-based company compare (no upload required)
 - Price refresh (`demo`, `yfinance`)
+- AI Analyst panel (OpenAI/Anthropic via backend keys)
 - Positions and portfolio metrics
 - Browser UI served by backend at `/`
 - API docs at `/docs`
@@ -53,6 +54,15 @@ Optional:
 - Relative performance chart
 - Return by symbol chart
 - Comparison summary table
+
+### C. AI Analyst mode
+1. Open **Settings**
+2. Set AI provider/model (`OpenAI` or `Anthropic`)
+3. Ensure backend has matching API key env var:
+- `OPENAI_API_KEY` for OpenAI
+- `ANTHROPIC_API_KEY` for Claude
+4. Run compare or portfolio analysis first (to create context)
+5. Ask a question in **AI Analyst** and click **Analyze with AI**
 
 ### B. Portfolio analytics mode (requires trades)
 

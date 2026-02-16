@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -139,3 +140,18 @@ class CompanySymbolSearchItem(BaseModel):
 class CompanySymbolSearchResponse(BaseModel):
     query: str
     items: list[CompanySymbolSearchItem]
+
+
+class AIExplainRequest(BaseModel):
+    question: str = Field(min_length=5, max_length=2000)
+    provider: str | None = None
+    model: str | None = None
+    context_type: str = "compare"
+    context: dict[str, Any] = Field(default_factory=dict)
+    max_tokens: int = Field(default=700, ge=100, le=2000)
+
+
+class AIExplainResponse(BaseModel):
+    provider: str
+    model: str
+    answer: str

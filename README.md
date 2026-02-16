@@ -25,6 +25,8 @@ UI: `http://localhost:8000/`
 OpenAPI docs: `http://localhost:8000/docs`
 
 No-upload compare API: `POST /v1/companies/compare` (symbols + providers)
+Symbol search API: `GET /v1/companies/search?q=apple`
+AI explain API: `POST /v1/ai/explain`
 
 ## Local DB and Migrations
 
