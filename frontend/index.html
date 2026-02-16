@@ -544,6 +544,8 @@
         const compareBody = byId("compareBody");
         const compareStatus = byId("compareStatus");
         const connStatus = byId("connStatus");
+        const metricsNode = byId("metrics");
+        const insightsNode = byId("insights");
 
         compareBody.innerHTML = summary
           .map((s) => `
@@ -608,6 +610,35 @@
           connStatus.innerHTML = `<span class="warn">${msg}</span>`;
           return;
         }
+
+        const returns = summary.map((s) => Number(s.return_pct || 0));
+        const vols = summary.map((s) => Number(s.annualized_volatility || 0));
+        const dds = summary.map((s) => Number(s.max_drawdown || 0));
+        const avgReturn = returns.length ? returns.reduce((a, b) => a + b, 0) / returns.length : 0;
+        const avgVol = vols.length ? vols.reduce((a, b) => a + b, 0) / vols.length : 0;
+        const worstDd = dds.length ? Math.min(...dds) : 0;
+        const best = [...summary].sort((a, b) => (b.return_pct || 0) - (a.return_pct || 0))[0];
+        const worst = [...summary].sort((a, b) => (a.return_pct || 0) - (b.return_pct || 0))[0];
+
+        metricsNode.innerHTML = [
+          ["Compare Symbols", symbols.length],
+          ["Data Points", series.length],
+          ["Avg Return %", fmt(avgReturn * 100)],
+          ["Avg Ann. Vol %", fmt(avgVol * 100)],
+          ["Worst Drawdown %", fmt(worstDd * 100)],
+        ]
+          .map(([k, v]) => `<div class="metric"><div class="k">${k}</div><div class="v ${cls(v)}">${v}</div></div>`)
+          .join("");
+
+        insightsNode.innerHTML = [
+          `Compared ${symbols.join(", ")} from ${payload.start_date} to ${payload.end_date}.`,
+          best ? `Best performer: ${best.symbol} (${fmt((best.return_pct || 0) * 100)}%).` : "Best performer unavailable.",
+          worst ? `Worst performer: ${worst.symbol} (${fmt((worst.return_pct || 0) * 100)}%).` : "Worst performer unavailable.",
+          `Providers used: ${payload.providers_used.join(" → ")}.`,
+          payload.failed_symbols.length ? `Failed symbols: ${payload.failed_symbols.join(", ")}.` : "No symbol failures.",
+        ]
+          .map((x) => `<li>${x}</li>`)
+          .join("");
 
         const msg = `Compared ${symbols.length} symbols (${series.length} points) from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
         compareStatus.innerHTML = msg;
