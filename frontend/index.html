@@ -331,6 +331,23 @@
         </section>
 
         <section class="card">
+          <h3>Advanced Compare Analytics</h3>
+          <div class="split" style="margin-bottom: 12px;">
+            <div class="canvas-wrap"><canvas id="rollingVolChart"></canvas></div>
+            <div class="canvas-wrap"><canvas id="relativeStrengthChart"></canvas></div>
+          </div>
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr><th>Symbol</th><th>Momentum 20d %</th><th>Vol 20d (ann. %) </th><th>Drawdown 60d %</th><th>Regime</th></tr>
+              </thead>
+              <tbody id="regimeBody"></tbody>
+            </table>
+          </div>
+          <div id="advancedStatus" class="status"></div>
+        </section>
+
+        <section class="card">
           <h3>Positions</h3>
           <div style="overflow:auto;">
             <table>
@@ -386,12 +403,15 @@
       const STORE_KEY = "portfolio_api_base_url";
       const STORE_PROVIDERS_KEY = "portfolio_providers";
       const STORE_FOLLOWED_KEY = "portfolio_followed_symbols";
+      const BENCHMARK_SYMBOL = "SPY";
       let allocationChart;
       let pnlChart;
       let equityChart;
       let drawdownChart;
       let compareNormalizedChart;
       let compareReturnChart;
+      let rollingVolChart;
+      let relativeStrengthChart;
 
       function getBase() {
         const val = (localStorage.getItem(STORE_KEY) || "").trim();
@@ -561,8 +581,157 @@
         });
       }
 
+      function stddev(values) {
+        if (!values || values.length < 2) return 0;
+        const avg = values.reduce((a, b) => a + b, 0) / values.length;
+        const variance = values.reduce((a, b) => a + ((b - avg) ** 2), 0) / (values.length - 1);
+        return Math.sqrt(variance);
+      }
+
+      function maxDrawdown(prices) {
+        if (!prices || !prices.length) return 0;
+        let peak = prices[0];
+        let maxDd = 0;
+        for (const px of prices) {
+          peak = Math.max(peak, px);
+          if (peak > 0) maxDd = Math.min(maxDd, (px / peak) - 1);
+        }
+        return maxDd;
+      }
+
+      function latestN(values, n) {
+        return values.length <= n ? values : values.slice(values.length - n);
+      }
+
+      function buildRegimeRows(series, symbols) {
+        const rows = [];
+        for (const symbol of symbols) {
+          const prices = series.map((p) => p.prices?.[symbol]).filter((x) => x !== null && x !== undefined);
+          if (prices.length < 25) {
+            rows.push({ symbol, mom20: null, vol20: null, dd60: null, regime: "Insufficient Data" });
+            continue;
+          }
+
+          const last = prices[prices.length - 1];
+          const p20 = prices[prices.length - 21];
+          const mom20 = p20 > 0 ? (last / p20) - 1 : null;
+
+          const returns = [];
+          for (let i = 1; i < prices.length; i += 1) {
+            const prev = prices[i - 1];
+            const cur = prices[i];
+            if (prev > 0) returns.push((cur / prev) - 1);
+          }
+          const vol20 = returns.length >= 20 ? stddev(latestN(returns, 20)) * Math.sqrt(252) : null;
+          const dd60 = maxDrawdown(latestN(prices, 60));
+
+          let regime = "Neutral";
+          if (mom20 === null || vol20 === null) regime = "Insufficient Data";
+          else if (mom20 > 0.05 && vol20 < 0.40) regime = "Risk-On";
+          else if (mom20 < -0.05 || dd60 < -0.20) regime = "Risk-Off";
+
+          rows.push({ symbol, mom20, vol20, dd60, regime });
+        }
+        return rows;
+      }
+
+      function renderAdvancedCompare(payload, trackedSymbols) {
+        const series = payload.series || [];
+        const symbols = trackedSymbols.length ? trackedSymbols : (payload.symbols || []).filter((s) => s !== BENCHMARK_SYMBOL);
+        const labels = series.map((p) => p.date);
+        const status = byId("advancedStatus");
+        const regimeBody = byId("regimeBody");
+
+        const volCtx = byId("rollingVolChart").getContext("2d");
+        const rsCtx = byId("relativeStrengthChart").getContext("2d");
+        if (rollingVolChart) rollingVolChart.destroy();
+        if (relativeStrengthChart) relativeStrengthChart.destroy();
+
+        if (!series.length || !symbols.length) {
+          regimeBody.innerHTML = "";
+          status.innerHTML = '<span class="warn">Advanced analytics unavailable: no series/symbols.</span>';
+          return;
+        }
+
+        const colors = ["#1f6feb", "#0f8f3c", "#b42318", "#c97400", "#6f42c1", "#0077aa", "#ef4444", "#14b8a6"];
+        const volDatasets = symbols.map((symbol, idx) => {
+          const prices = series.map((p) => p.prices?.[symbol]);
+          const returns = prices.map((_, i) => {
+            if (i === 0) return null;
+            const prev = prices[i - 1];
+            const cur = prices[i];
+            if (prev === null || prev === undefined || cur === null || cur === undefined || prev <= 0) return null;
+            return (cur / prev) - 1;
+          });
+          const rollingVol = returns.map((_, i) => {
+            const window = returns.slice(Math.max(1, i - 19), i + 1).filter((x) => x !== null && x !== undefined);
+            if (window.length < 15) return null;
+            return stddev(window) * Math.sqrt(252) * 100;
+          });
+          return {
+            label: symbol,
+            data: rollingVol,
+            borderColor: colors[idx % colors.length],
+            backgroundColor: "transparent",
+            tension: 0.2,
+          };
+        });
+
+        rollingVolChart = new Chart(volCtx, {
+          type: "line",
+          data: { labels, datasets: volDatasets },
+          options: {
+            plugins: { title: { display: true, text: "Rolling Volatility (20d, Annualized %)" } },
+            scales: { y: { beginAtZero: true } },
+          },
+        });
+
+        const benchmarkAvailable = (payload.symbols || []).includes(BENCHMARK_SYMBOL);
+        const rsDatasets = benchmarkAvailable
+          ? symbols.map((symbol, idx) => ({
+              label: `${symbol} vs ${BENCHMARK_SYMBOL}`,
+              data: series.map((p) => {
+                const sym = p.normalized?.[symbol];
+                const bm = p.normalized?.[BENCHMARK_SYMBOL];
+                if (sym === null || sym === undefined || bm === null || bm === undefined || bm === 0) return null;
+                return ((sym / bm) - 1) * 100;
+              }),
+              borderColor: colors[idx % colors.length],
+              backgroundColor: "transparent",
+              tension: 0.2,
+            }))
+          : [];
+
+        relativeStrengthChart = new Chart(rsCtx, {
+          type: "line",
+          data: { labels, datasets: rsDatasets },
+          options: {
+            plugins: { title: { display: true, text: `Relative Strength vs ${BENCHMARK_SYMBOL} (%)` } },
+            scales: { y: { beginAtZero: false } },
+          },
+        });
+
+        const regimeRows = buildRegimeRows(series, symbols);
+        regimeBody.innerHTML = regimeRows
+          .map((r) => `
+            <tr>
+              <td>${r.symbol}</td>
+              <td class="${cls((r.mom20 || 0) * 100)}">${r.mom20 === null ? "-" : fmt(r.mom20 * 100)}</td>
+              <td>${r.vol20 === null ? "-" : fmt(r.vol20 * 100)}</td>
+              <td class="${cls((r.dd60 || 0) * 100)}">${r.dd60 === null ? "-" : fmt(r.dd60 * 100)}</td>
+              <td>${r.regime}</td>
+            </tr>
+          `)
+          .join("");
+
+        status.innerHTML = benchmarkAvailable
+          ? `Advanced analytics ready for ${symbols.length} symbols vs ${BENCHMARK_SYMBOL}.`
+          : `<span class="warn">${BENCHMARK_SYMBOL} benchmark unavailable from providers; relative strength chart may be empty.</span>`;
+      }
+
       function renderCompanyCompare(payload) {
         const symbols = payload.symbols || [];
+        const trackedSymbols = symbols.filter((s) => s !== BENCHMARK_SYMBOL);
         const series = payload.series || [];
         const summary = payload.summary || [];
         const compareBody = byId("compareBody");
@@ -576,7 +745,7 @@
         compareBody.innerHTML = summary
           .map((s) => `
             <tr>
-              <td>${s.symbol}</td>
+              <td>${s.symbol === BENCHMARK_SYMBOL ? `${s.symbol} (Benchmark)` : s.symbol}</td>
               <td>${fmt(s.start_price)}</td>
               <td>${fmt(s.end_price)}</td>
               <td class="${cls(s.return_pct * 100)}">${fmt((s.return_pct || 0) * 100)}</td>
@@ -664,6 +833,10 @@
           connStatus.innerHTML = `<span class="warn">${msg}</span>`;
           leaderboardBody.innerHTML = "";
           correlationBody.innerHTML = "";
+          byId("regimeBody").innerHTML = "";
+          byId("advancedStatus").innerHTML = "";
+          if (rollingVolChart) rollingVolChart.destroy();
+          if (relativeStrengthChart) relativeStrengthChart.destroy();
           return;
         }
 
@@ -677,7 +850,7 @@
         const worst = [...summary].sort((a, b) => (a.return_pct || 0) - (b.return_pct || 0))[0];
 
         metricsNode.innerHTML = [
-          ["Compare Symbols", symbols.length],
+          ["Compare Symbols", trackedSymbols.length || symbols.length],
           ["Data Points", series.length],
           ["Avg Return %", fmt(avgReturn * 100)],
           ["Avg Ann. Vol %", fmt(avgVol * 100)],
@@ -687,7 +860,7 @@
           .join("");
 
         insightsNode.innerHTML = [
-          `Compared ${symbols.join(", ")} from ${payload.start_date} to ${payload.end_date}.`,
+          `Compared ${(trackedSymbols.length ? trackedSymbols : symbols).join(", ")} from ${payload.start_date} to ${payload.end_date}.`,
           best ? `Best performer: ${best.symbol} (${fmt((best.return_pct || 0) * 100)}%).` : "Best performer unavailable.",
           worst ? `Worst performer: ${worst.symbol} (${fmt((worst.return_pct || 0) * 100)}%).` : "Worst performer unavailable.",
           `Providers used: ${payload.providers_used.join(" → ")}.`,
@@ -696,14 +869,17 @@
           .map((x) => `<li>${x}</li>`)
           .join("");
 
-        const msg = `Compared ${symbols.length} symbols (${series.length} points) from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
+        const msg = `Compared ${(trackedSymbols.length || symbols.length)} symbols (${series.length} points) from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${symbols.includes(BENCHMARK_SYMBOL) ? ` + benchmark ${BENCHMARK_SYMBOL}` : ""}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
         compareStatus.innerHTML = msg;
         connStatus.innerHTML = msg;
+        renderAdvancedCompare(payload, trackedSymbols);
       }
 
       async function runCompanyCompare() {
         const status = byId("compareStatus");
         const followedSymbols = getFollowedSymbols();
+        const requestSymbols = [...followedSymbols];
+        if (!requestSymbols.includes(BENCHMARK_SYMBOL)) requestSymbols.push(BENCHMARK_SYMBOL);
         const providers = getSelectedProviders();
         const endDate = byId("snapshotDate").value || new Date().toISOString().slice(0, 10);
         const lookbackDays = Number(byId("lookbackDays").value || 180);
@@ -711,8 +887,14 @@
         if (!followedSymbols.length) {
           status.innerHTML = '<span class="warn">Set companies to follow in Settings first (e.g., AAPL, MSFT, BLAIZE).</span>';
           byId("compareBody").innerHTML = "";
+          byId("leaderboardBody").innerHTML = "";
+          byId("correlationBody").innerHTML = "";
+          byId("regimeBody").innerHTML = "";
+          byId("advancedStatus").innerHTML = "";
           if (compareNormalizedChart) compareNormalizedChart.destroy();
           if (compareReturnChart) compareReturnChart.destroy();
+          if (rollingVolChart) rollingVolChart.destroy();
+          if (relativeStrengthChart) relativeStrengthChart.destroy();
           return;
         }
 
@@ -727,7 +909,7 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              symbols: followedSymbols,
+              symbols: requestSymbols,
               start_date: startDate,
               end_date: endDate,
               providers,
@@ -739,8 +921,14 @@
           status.innerHTML = `<span class="warn">${err.message}</span>`;
           byId("connStatus").innerHTML = `<span class="warn">${err.message}</span>`;
           byId("compareBody").innerHTML = "";
+          byId("leaderboardBody").innerHTML = "";
+          byId("correlationBody").innerHTML = "";
+          byId("regimeBody").innerHTML = "";
+          byId("advancedStatus").innerHTML = "";
           if (compareNormalizedChart) compareNormalizedChart.destroy();
           if (compareReturnChart) compareReturnChart.destroy();
+          if (rollingVolChart) rollingVolChart.destroy();
+          if (relativeStrengthChart) relativeStrengthChart.destroy();
           throw err;
         }
       }
