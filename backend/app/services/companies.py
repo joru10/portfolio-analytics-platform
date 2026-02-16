@@ -1,7 +1,10 @@
 import math
+import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,6 +41,14 @@ class CompanyCompareResult:
     series: list[CompanyComparePoint]
     summary: list[CompanyCompareSummary]
     correlation: dict[str, dict[str, float]]
+
+
+@dataclass
+class SymbolSearchItem:
+    symbol: str
+    name: str | None
+    exchange: str | None
+    quote_type: str | None
 
 
 def _stddev(values: list[float]) -> float:
@@ -255,3 +266,30 @@ def compare_companies(
         summary=summary,
         correlation=correlation,
     )
+
+
+def search_company_symbols(query: str, limit: int = 10) -> list[SymbolSearchItem]:
+    clean_query = query.strip()
+    if len(clean_query) < 2:
+        raise ValueError("Query must be at least 2 characters")
+
+    qs = urlencode({"q": clean_query, "quotesCount": max(1, min(limit, 20))})
+    url = f"https://query1.finance.yahoo.com/v1/finance/search?{qs}"
+    req = Request(url, headers={"User-Agent": "portfolio-analytics/1.0"})
+    with urlopen(req, timeout=8) as resp:  # nosec B310
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    items: list[SymbolSearchItem] = []
+    for raw in payload.get("quotes", []):
+        symbol = (raw.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        items.append(
+            SymbolSearchItem(
+                symbol=symbol,
+                name=raw.get("shortname") or raw.get("longname"),
+                exchange=raw.get("exchange"),
+                quote_type=raw.get("quoteType"),
+            )
+        )
+    return items

@@ -127,3 +127,15 @@ class CompanyCompareResponse(BaseModel):
     series: list[CompanyComparePointResponse]
     summary: list[CompanyCompareSummaryResponse]
     correlation: dict[str, dict[str, float]]
+
+
+class CompanySymbolSearchItem(BaseModel):
+    symbol: str
+    name: str | None
+    exchange: str | None
+    quote_type: str | None
+
+
+class CompanySymbolSearchResponse(BaseModel):
+    query: str
+    items: list[CompanySymbolSearchItem]

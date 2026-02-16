@@ -161,6 +161,34 @@
       .status { font-size: 13px; color: var(--muted); margin-top: 10px; }
       .ok { color: var(--ok); }
       .warn { color: var(--warn); }
+      .heatmap th,
+      .heatmap td {
+        text-align: center;
+        min-width: 56px;
+        font-variant-numeric: tabular-nums;
+      }
+      .heatmap th:first-child,
+      .heatmap td:first-child {
+        text-align: left;
+        min-width: 72px;
+      }
+      .search-results {
+        margin-top: 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        max-height: 220px;
+        overflow: auto;
+        background: #fff;
+      }
+      .search-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      .search-item:last-child { border-bottom: none; }
       @media (max-width: 1000px) {
         .row, .metrics, .split { grid-template-columns: 1fr 1fr; }
       }
@@ -321,11 +349,11 @@
               </table>
             </div>
             <div style="overflow:auto;">
-              <table>
+              <table class="heatmap">
                 <thead>
-                  <tr><th>Pair</th><th>Correlation</th></tr>
+                  <tr id="correlationHead"><th>Corr Matrix</th></tr>
                 </thead>
-                <tbody id="correlationBody"></tbody>
+                <tbody id="correlationMatrixBody"></tbody>
               </table>
             </div>
           </div>
@@ -390,6 +418,18 @@
             <input id="followedInput" placeholder="AAPL, MSFT, BLAIZE" />
           </div>
         </div>
+        <div class="row" style="margin-top: 10px;">
+          <div style="grid-column: span 3;">
+            <label for="symbolSearchInput">Stock Code Search (company name or ticker)</label>
+            <input id="symbolSearchInput" placeholder="Blaize, Apple, Nvidia..." />
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="runSymbolSearch" class="secondary">Search</button>
+          </div>
+        </div>
+        <div id="symbolSearchStatus" class="status"></div>
+        <div id="symbolSearchResults" class="search-results"></div>
         <div class="mini" style="margin-top:8px;">Example temporary URL: `https://cities-gps-maybe-menus.trycloudflare.com`</div>
         <div style="display:flex; justify-content:flex-end; margin-top: 12px;">
           <button id="closeSettings" class="secondary">Close</button>
@@ -751,6 +791,96 @@
           : `<span class="warn">${BENCHMARK_SYMBOL} benchmark unavailable from providers; relative strength chart may be empty.</span>`;
       }
 
+      function correlationCellColor(value) {
+        const v = Math.max(-1, Math.min(1, Number(value || 0)));
+        if (v >= 0) {
+          const alpha = 0.14 + (v * 0.55);
+          return `rgba(15, 143, 60, ${alpha.toFixed(3)})`;
+        }
+        const alpha = 0.14 + (Math.abs(v) * 0.55);
+        return `rgba(180, 35, 24, ${alpha.toFixed(3)})`;
+      }
+
+      function renderCorrelationMatrix(symbols, correlation) {
+        const head = byId("correlationHead");
+        const body = byId("correlationMatrixBody");
+        const shownSymbols = symbols.filter((s) => s !== BENCHMARK_SYMBOL);
+
+        head.innerHTML = `<th>Corr Matrix</th>${shownSymbols.map((s) => `<th>${s}</th>`).join("")}`;
+        if (!shownSymbols.length) {
+          body.innerHTML = `<tr><td colspan="2">No symbols available.</td></tr>`;
+          return;
+        }
+
+        body.innerHTML = shownSymbols
+          .map((rowSymbol) => {
+            const rowCells = shownSymbols
+              .map((colSymbol) => {
+                const value = correlation?.[rowSymbol]?.[colSymbol] ?? (rowSymbol === colSymbol ? 1 : 0);
+                return `<td style="background:${correlationCellColor(value)}">${fmt(value)}</td>`;
+              })
+              .join("");
+            return `<tr><td><strong>${rowSymbol}</strong></td>${rowCells}</tr>`;
+          })
+          .join("");
+      }
+
+      function renderMarketModePortfolioSections(payload, trackedSymbols) {
+        const summary = (payload.summary || []).filter((s) => trackedSymbols.includes(s.symbol));
+        const series = payload.series || [];
+        const breakdownStatus = byId("breakdownStatus");
+        const chartsStatus = byId("portfolioChartsStatus");
+
+        byId("moversBody").innerHTML = [...summary]
+          .sort((a, b) => Math.abs(b.return_pct || 0) - Math.abs(a.return_pct || 0))
+          .slice(0, 6)
+          .map((s) => `
+            <tr>
+              <td>${s.symbol}</td>
+              <td class="${cls((s.return_pct || 0) * 100)}">${fmt((s.return_pct || 0) * 100)}</td>
+              <td>${fmt(s.end_price)}</td>
+              <td>${fmt((s.annualized_volatility || 0) * 100)}</td>
+            </tr>
+          `)
+          .join("") || `<tr><td colspan="4">No market-mode movers available.</td></tr>`;
+
+        const avgReturn = summary.length ? summary.reduce((a, s) => a + Number(s.return_pct || 0), 0) / summary.length : 0;
+        const avgVol = summary.length ? summary.reduce((a, s) => a + Number(s.annualized_volatility || 0), 0) / summary.length : 0;
+        byId("accountsBody").innerHTML = `
+          <tr><td>MARKET_UNIVERSE</td><td>${summary.length}</td><td class="${cls(avgReturn * 100)}">${fmt(avgReturn * 100)}</td><td>${fmt(avgVol * 100)}</td></tr>
+        `;
+
+        const chartRows = summary.map((s) => ({
+          symbol: s.symbol,
+          market_value: Number(s.end_price || 0),
+          unrealized_pnl: Number(s.return_pct || 0) * 100,
+          realized_pnl: 0,
+        }));
+        const firstDate = series[0]?.date;
+        const firstSeries = series[0] || null;
+        const finalSeries = series[series.length - 1] || null;
+        const initialBasket = trackedSymbols.reduce((acc, sym) => {
+          const base = firstSeries?.normalized?.[sym];
+          return acc + (base !== null && base !== undefined ? 100 * base : 0);
+        }, 0);
+        const analyticsSeries = series.map((p) => {
+          const basket = trackedSymbols.reduce((acc, sym) => {
+            const v = p.normalized?.[sym];
+            return acc + (v !== null && v !== undefined ? 100 * v : 0);
+          }, 0);
+          return { date: p.date, market_value: basket, drawdown: 0 };
+        });
+        let peak = 0;
+        analyticsSeries.forEach((p) => {
+          peak = Math.max(peak, p.market_value);
+          p.drawdown = peak > 0 ? (p.market_value / peak) - 1 : 0;
+        });
+
+        renderCharts(chartRows, { series: analyticsSeries });
+        breakdownStatus.textContent = "Analysis Breakdown shown in market-comparison mode.";
+        chartsStatus.textContent = initialBasket > 0 && finalSeries ? "Charts shown in market-comparison mode." : "Charts unavailable.";
+      }
+
       function renderCompanyCompare(payload) {
         const symbols = payload.symbols || [];
         const trackedSymbols = symbols.filter((s) => s !== BENCHMARK_SYMBOL);
@@ -758,7 +888,6 @@
         const summary = (payload.summary || []).filter((s) => s.symbol !== BENCHMARK_SYMBOL);
         const compareBody = byId("compareBody");
         const leaderboardBody = byId("leaderboardBody");
-        const correlationBody = byId("correlationBody");
         const compareStatus = byId("compareStatus");
         const connStatus = byId("connStatus");
         const metricsNode = byId("metrics");
@@ -790,21 +919,7 @@
           `)
           .join("");
 
-        const pairs = [];
-        const corr = payload.correlation || {};
-        for (const left of symbols) {
-          for (const right of symbols) {
-            if (left >= right) continue;
-            const value = corr[left] && corr[left][right] !== undefined ? corr[left][right] : null;
-            pairs.push({ pair: `${left} vs ${right}`, value });
-          }
-        }
-        correlationBody.innerHTML = pairs.length
-          ? pairs
-              .sort((a, b) => Math.abs(num(b.value)) - Math.abs(num(a.value)))
-              .map((p) => `<tr><td>${p.pair}</td><td>${fmt(p.value)}</td></tr>`)
-              .join("")
-          : `<tr><td colspan="2">Not enough symbols for pairwise correlation.</td></tr>`;
+        renderCorrelationMatrix(symbols, payload.correlation || {});
 
         const labels = series.map((p) => p.date);
         const normalizedCtx = byId("compareNormalizedChart").getContext("2d");
@@ -854,7 +969,7 @@
           compareStatus.innerHTML = `<span class="warn">${msg}</span>`;
           connStatus.innerHTML = `<span class="warn">${msg}</span>`;
           leaderboardBody.innerHTML = "";
-          correlationBody.innerHTML = "";
+          byId("correlationMatrixBody").innerHTML = "";
           byId("regimeBody").innerHTML = "";
           byId("advancedStatus").innerHTML = "";
           if (rollingVolChart) rollingVolChart.destroy();
@@ -894,6 +1009,7 @@
         const msg = `Compared ${(trackedSymbols.length || symbols.length)} symbols (${series.length} points) from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${symbols.includes(BENCHMARK_SYMBOL) ? ` + benchmark ${BENCHMARK_SYMBOL}` : ""}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
         compareStatus.innerHTML = msg;
         connStatus.innerHTML = msg;
+        renderMarketModePortfolioSections(payload, trackedSymbols);
         renderAdvancedCompare(payload, trackedSymbols);
       }
 
@@ -910,7 +1026,7 @@
           status.innerHTML = '<span class="warn">Set companies to follow in Settings first (e.g., AAPL, MSFT, BLAIZE).</span>';
           byId("compareBody").innerHTML = "";
           byId("leaderboardBody").innerHTML = "";
-          byId("correlationBody").innerHTML = "";
+          byId("correlationMatrixBody").innerHTML = "";
           byId("regimeBody").innerHTML = "";
           byId("advancedStatus").innerHTML = "";
           if (compareNormalizedChart) compareNormalizedChart.destroy();
@@ -938,14 +1054,13 @@
             }),
           });
           renderCompanyCompare(payload);
-          renderPortfolioPlaceholders("Portfolio sections are empty until trades are imported. Compare analytics above are fully data-driven.");
           byId("compareSection").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
           byId("connStatus").innerHTML = `<span class="warn">${err.message}</span>`;
           byId("compareBody").innerHTML = "";
           byId("leaderboardBody").innerHTML = "";
-          byId("correlationBody").innerHTML = "";
+          byId("correlationMatrixBody").innerHTML = "";
           byId("regimeBody").innerHTML = "";
           byId("advancedStatus").innerHTML = "";
           if (compareNormalizedChart) compareNormalizedChart.destroy();
@@ -956,7 +1071,8 @@
         }
       }
 
-      async function loadData() {
+      async function loadData(options = {}) {
+        const { preserveOnError = false } = options;
         const qs = queryParams();
         const metricsNode = byId("metrics");
         const body = byId("positionsBody");
@@ -1065,11 +1181,61 @@
           `).join("");
           posStatus.textContent = `Snapshot ${positions.snapshot_date}. Rows: ${positions.positions.length}.`;
         } catch (err) {
-          metricsNode.innerHTML = "";
-          renderPortfolioPlaceholders("Portfolio sections require imported trades. Use Trade Import, then Run Analysis.");
-          insights.innerHTML = "";
+          if (!preserveOnError) {
+            metricsNode.innerHTML = "";
+            renderPortfolioPlaceholders("Portfolio sections require imported trades. Use Trade Import, then Run Analysis.");
+            insights.innerHTML = "";
+          }
           posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
+          if (preserveOnError) throw err;
         }
+      }
+
+      async function runSymbolSearch() {
+        const query = byId("symbolSearchInput").value.trim();
+        const status = byId("symbolSearchStatus");
+        const resultsNode = byId("symbolSearchResults");
+        if (query.length < 2) {
+          status.innerHTML = '<span class="warn">Enter at least 2 characters to search.</span>';
+          return;
+        }
+
+        try {
+          status.textContent = "Searching symbols...";
+          const payload = await request(`/v1/companies/search?q=${encodeURIComponent(query)}`);
+          const items = payload.items || [];
+          if (!items.length) {
+            resultsNode.innerHTML = `<div class="search-item">No symbols found for "${query}".</div>`;
+            status.innerHTML = '<span class="warn">No matches.</span>';
+            return;
+          }
+          resultsNode.innerHTML = items
+            .map((item) => `
+              <div class="search-item">
+                <div>
+                  <strong>${item.symbol}</strong>
+                  <div class="mini">${item.name || "Unknown"}${item.exchange ? ` · ${item.exchange}` : ""}</div>
+                </div>
+                <button class="secondary add-symbol" data-symbol="${item.symbol}" style="width:auto;min-height:32px;">Add</button>
+              </div>
+            `)
+            .join("");
+          status.innerHTML = `Found ${items.length} result(s).`;
+        } catch (err) {
+          status.innerHTML = `<span class="warn">${err.message}</span>`;
+        }
+      }
+
+      function addFollowedSymbol(symbol) {
+        const followedInput = byId("followedInput");
+        const existing = followedInput.value
+          .split(",")
+          .map((x) => x.trim().toUpperCase())
+          .filter(Boolean);
+        const merged = [...new Set([...existing, symbol.toUpperCase()])];
+        followedInput.value = merged.join(", ");
+        localStorage.setItem(STORE_FOLLOWED_KEY, merged.join(", "));
+        byId("symbolSearchStatus").innerHTML = `Added ${symbol.toUpperCase()} to followed symbols.`;
       }
 
       function syncSettingsUi() {
@@ -1083,6 +1249,8 @@
       function openSettings() {
         byId("settingsModal").classList.add("open");
         syncSettingsUi();
+        byId("symbolSearchStatus").textContent = "";
+        byId("symbolSearchResults").innerHTML = "";
       }
 
       function closeSettings() {
@@ -1116,15 +1284,28 @@
           compareStatus.innerHTML = '<span class="warn">Company compare failed. You can still run portfolio analytics if trades were imported.</span>';
         }
         try {
-          await loadData();
+          await loadData({ preserveOnError: true });
         } catch (err) {
           const status = byId("positionsStatus");
-          status.innerHTML = '<span class="warn">Portfolio analytics needs imported trades. Company compare still completed.</span>';
+          status.innerHTML = '<span class="warn">Portfolio analytics needs imported trades. Company compare is still available below.</span>';
         }
       });
       byId("openSettings").addEventListener("click", openSettings);
       byId("closeSettings").addEventListener("click", closeSettings);
       byId("saveSettings").addEventListener("click", saveSettings);
+      byId("runSymbolSearch").addEventListener("click", runSymbolSearch);
+      byId("symbolSearchInput").addEventListener("keydown", async (evt) => {
+        if (evt.key === "Enter") {
+          evt.preventDefault();
+          await runSymbolSearch();
+        }
+      });
+      byId("symbolSearchResults").addEventListener("click", (evt) => {
+        const btn = evt.target.closest(".add-symbol");
+        if (!btn) return;
+        const symbol = btn.getAttribute("data-symbol");
+        if (symbol) addFollowedSymbol(symbol);
+      });
 
       byId("snapshotDate").value = new Date().toISOString().slice(0, 10);
       if (!localStorage.getItem(STORE_KEY)) {
