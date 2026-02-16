@@ -46,3 +46,43 @@ class YFinanceMarketDataProvider:
                 failed.append(clean)
 
         return points, failed
+
+    def fetch_history(self, symbols: list[str], start_date: date, end_date: date) -> tuple[list[PricePoint], list[str]]:
+        points: list[PricePoint] = []
+        failed: list[str] = []
+
+        fetch_end = end_date + timedelta(days=1)
+
+        for symbol in symbols:
+            clean = symbol.strip().upper()
+            if not clean:
+                continue
+            try:
+                history = yf.Ticker(clean).history(start=start_date.isoformat(), end=fetch_end.isoformat(), auto_adjust=False)
+                if history.empty:
+                    failed.append(clean)
+                    continue
+
+                if "Close" not in history.columns:
+                    failed.append(clean)
+                    continue
+
+                for idx, row in history.iterrows():
+                    dt = idx.date()
+                    if dt < start_date or dt > end_date:
+                        continue
+                    close = row.get("Close")
+                    if close is None:
+                        continue
+                    points.append(
+                        PricePoint(
+                            symbol=clean,
+                            price_date=dt,
+                            close_price=Decimal(str(float(close))),
+                            currency="USD",
+                        )
+                    )
+            except Exception:
+                failed.append(clean)
+
+        return points, failed

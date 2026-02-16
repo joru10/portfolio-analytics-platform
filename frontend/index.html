@@ -168,7 +168,7 @@
       <div class="header-row">
         <div>
           <h1>Portfolio Analytics</h1>
-          <div class="sub">Upload trades, refresh prices, and inspect positions/metrics.</div>
+          <div class="sub">Compare followed companies from providers directly, or upload trades for full portfolio analytics.</div>
         </div>
         <div class="header-actions">
           <button id="openSettings" class="secondary">Settings</button>
@@ -195,6 +195,10 @@
             <div>
               <label>&nbsp;</label>
               <button id="refreshPrices" class="secondary">Refresh Prices</button>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="compareCompanies" class="secondary">Compare Companies</button>
             </div>
           </div>
           <div id="connStatus" class="status">Not checked yet.</div>
@@ -281,6 +285,28 @@
         </section>
 
         <section class="card">
+          <h3>Company Compare (No Upload Required)</h3>
+          <div class="mini" style="margin-bottom: 10px;">
+            Uses symbols from Settings -> Companies to Follow and fetches historical prices via selected providers.
+          </div>
+          <div class="split" style="margin-bottom: 12px;">
+            <div class="canvas-wrap"><canvas id="compareNormalizedChart"></canvas></div>
+            <div class="canvas-wrap"><canvas id="compareReturnChart"></canvas></div>
+          </div>
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th><th>Start</th><th>End</th><th>Total Return %</th><th>Ann. Vol %</th><th>Max DD %</th><th>Obs</th>
+                </tr>
+              </thead>
+              <tbody id="compareBody"></tbody>
+            </table>
+          </div>
+          <div id="compareStatus" class="status"></div>
+        </section>
+
+        <section class="card">
           <h3>Positions</h3>
           <div style="overflow:auto;">
             <table>
@@ -340,6 +366,8 @@
       let pnlChart;
       let equityChart;
       let drawdownChart;
+      let compareNormalizedChart;
+      let compareReturnChart;
 
       function getBase() {
         const val = (localStorage.getItem(STORE_KEY) || "").trim();
@@ -509,6 +537,114 @@
         });
       }
 
+      function renderCompanyCompare(payload) {
+        const symbols = payload.symbols || [];
+        const series = payload.series || [];
+        const summary = payload.summary || [];
+        const compareBody = byId("compareBody");
+        const compareStatus = byId("compareStatus");
+
+        compareBody.innerHTML = summary
+          .map((s) => `
+            <tr>
+              <td>${s.symbol}</td>
+              <td>${fmt(s.start_price)}</td>
+              <td>${fmt(s.end_price)}</td>
+              <td class="${cls(s.return_pct * 100)}">${fmt((s.return_pct || 0) * 100)}</td>
+              <td>${fmt((s.annualized_volatility || 0) * 100)}</td>
+              <td class="${cls(s.max_drawdown * 100)}">${fmt((s.max_drawdown || 0) * 100)}</td>
+              <td>${fmt(s.observations)}</td>
+            </tr>
+          `)
+          .join("");
+
+        const labels = series.map((p) => p.date);
+        const normalizedCtx = byId("compareNormalizedChart").getContext("2d");
+        const returnCtx = byId("compareReturnChart").getContext("2d");
+        if (compareNormalizedChart) compareNormalizedChart.destroy();
+        if (compareReturnChart) compareReturnChart.destroy();
+
+        const colors = ["#1f6feb", "#0f8f3c", "#b42318", "#c97400", "#6f42c1", "#0077aa", "#8b5cf6", "#ef4444"];
+        compareNormalizedChart = new Chart(normalizedCtx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: symbols.map((symbol, idx) => ({
+              label: symbol,
+              data: series.map((p) => (p.normalized?.[symbol] !== null && p.normalized?.[symbol] !== undefined ? (p.normalized[symbol] - 1) * 100 : null)),
+              borderColor: colors[idx % colors.length],
+              backgroundColor: "transparent",
+              tension: 0.2,
+            })),
+          },
+          options: {
+            plugins: { title: { display: true, text: "Relative Performance (% from first point)" } },
+            scales: { y: { beginAtZero: false } },
+          },
+        });
+
+        compareReturnChart = new Chart(returnCtx, {
+          type: "bar",
+          data: {
+            labels: summary.map((s) => s.symbol),
+            datasets: [
+              {
+                label: "Total Return %",
+                data: summary.map((s) => (s.return_pct || 0) * 100),
+                backgroundColor: summary.map((s) => ((s.return_pct || 0) >= 0 ? "#0f8f3c" : "#b42318")),
+              },
+            ],
+          },
+          options: {
+            plugins: { title: { display: true, text: "Total Return by Symbol" } },
+            scales: { y: { beginAtZero: true } },
+          },
+        });
+
+        compareStatus.innerHTML = `Compared ${symbols.length} symbols from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
+      }
+
+      async function runCompanyCompare() {
+        const status = byId("compareStatus");
+        const followedSymbols = getFollowedSymbols();
+        const providers = getSelectedProviders();
+        const endDate = byId("snapshotDate").value || new Date().toISOString().slice(0, 10);
+        const lookbackDays = Number(byId("lookbackDays").value || 180);
+
+        if (!followedSymbols.length) {
+          status.innerHTML = '<span class="warn">Set companies to follow in Settings first (e.g., AAPL, MSFT, BLAIZE).</span>';
+          byId("compareBody").innerHTML = "";
+          if (compareNormalizedChart) compareNormalizedChart.destroy();
+          if (compareReturnChart) compareReturnChart.destroy();
+          return;
+        }
+
+        const start = new Date(`${endDate}T00:00:00`);
+        start.setDate(start.getDate() - Math.max(30, lookbackDays));
+        const startDate = start.toISOString().slice(0, 10);
+
+        try {
+          status.textContent = "Running provider-based company compare...";
+          const payload = await request("/v1/companies/compare", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              symbols: followedSymbols,
+              start_date: startDate,
+              end_date: endDate,
+              providers,
+            }),
+          });
+          renderCompanyCompare(payload);
+        } catch (err) {
+          status.innerHTML = `<span class="warn">${err.message}</span>`;
+          byId("compareBody").innerHTML = "";
+          if (compareNormalizedChart) compareNormalizedChart.destroy();
+          if (compareReturnChart) compareReturnChart.destroy();
+          throw err;
+        }
+      }
+
       async function loadData() {
         const qs = queryParams();
         const metricsNode = byId("metrics");
@@ -661,8 +797,22 @@
       byId("checkHealth").addEventListener("click", checkHealth);
       byId("importTrades").addEventListener("click", importTrades);
       byId("refreshPrices").addEventListener("click", refreshPrices);
+      byId("compareCompanies").addEventListener("click", runCompanyCompare);
       byId("loadData").addEventListener("click", loadData);
-      byId("runAll").addEventListener("click", loadData);
+      byId("runAll").addEventListener("click", async () => {
+        try {
+          await runCompanyCompare();
+        } catch (err) {
+          const compareStatus = byId("compareStatus");
+          compareStatus.innerHTML = '<span class="warn">Company compare failed. You can still run portfolio analytics if trades were imported.</span>';
+        }
+        try {
+          await loadData();
+        } catch (err) {
+          const status = byId("positionsStatus");
+          status.innerHTML = '<span class="warn">Portfolio analytics needs imported trades. Company compare still completed.</span>';
+        }
+      });
       byId("openSettings").addEventListener("click", openSettings);
       byId("closeSettings").addEventListener("click", closeSettings);
       byId("saveSettings").addEventListener("click", saveSettings);

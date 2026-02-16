@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.companies import router as companies_router
 from app.api.portfolio import router as portfolio_router
 from app.api.prices import router as prices_router
 from app.api.trades import router as trades_router
@@ -23,6 +24,7 @@ app.add_middleware(
 app.include_router(trades_router)
 app.include_router(portfolio_router)
 app.include_router(prices_router)
+app.include_router(companies_router)
 
 
 @app.get("/health")

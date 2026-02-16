@@ -93,3 +93,37 @@ class PriceRefreshResponse(BaseModel):
     processed_count: int
     failed_symbols: list[str]
     job_run_id: int
+
+
+class CompanyCompareRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    start_date: date | None = None
+    end_date: date | None = None
+    providers: list[str] = Field(default_factory=list)
+
+
+class CompanyComparePointResponse(BaseModel):
+    date: date
+    prices: dict[str, float | None]
+    normalized: dict[str, float | None]
+
+
+class CompanyCompareSummaryResponse(BaseModel):
+    symbol: str
+    start_price: float | None
+    end_price: float | None
+    return_pct: float
+    annualized_volatility: float
+    max_drawdown: float
+    observations: int
+
+
+class CompanyCompareResponse(BaseModel):
+    start_date: date
+    end_date: date
+    symbols: list[str]
+    providers_used: list[str]
+    failed_symbols: list[str]
+    series: list[CompanyComparePointResponse]
+    summary: list[CompanyCompareSummaryResponse]
+    correlation: dict[str, dict[str, float]]

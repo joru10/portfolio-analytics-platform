@@ -24,6 +24,8 @@ API health: `http://localhost:8000/health`
 UI: `http://localhost:8000/`
 OpenAPI docs: `http://localhost:8000/docs`
 
+No-upload compare API: `POST /v1/companies/compare` (symbols + providers)
+
 ## Local DB and Migrations
 
 ```bash
