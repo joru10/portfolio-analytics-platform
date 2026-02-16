@@ -254,6 +254,7 @@
 
         <section class="card">
           <h3>Analysis Breakdown</h3>
+          <div id="breakdownStatus" class="status"></div>
           <div class="split">
             <div style="overflow:auto;">
               <table>
@@ -280,6 +281,7 @@
 
         <section class="card">
           <h3>Charts</h3>
+          <div id="portfolioChartsStatus" class="status"></div>
           <div class="split" style="margin-bottom: 12px;">
             <div class="canvas-wrap"><canvas id="allocationChart"></canvas></div>
             <div class="canvas-wrap"><canvas id="pnlChart"></canvas></div>
@@ -495,6 +497,26 @@
           .map((x) => x.trim().toLowerCase())
           .filter(Boolean);
         return providers.length ? providers : ["demo"];
+      }
+
+      function providersForCompare() {
+        const providers = getSelectedProviders();
+        if (providers.includes("yfinance")) {
+          return ["yfinance", ...providers.filter((p) => p !== "yfinance")];
+        }
+        return providers;
+      }
+
+      function renderPortfolioPlaceholders(message) {
+        byId("moversBody").innerHTML = `<tr><td colspan="4">${message}</td></tr>`;
+        byId("accountsBody").innerHTML = `<tr><td colspan="4">${message}</td></tr>`;
+        byId("positionsBody").innerHTML = `<tr><td colspan="8">${message}</td></tr>`;
+        byId("breakdownStatus").innerHTML = `<span class="warn">${message}</span>`;
+        byId("portfolioChartsStatus").innerHTML = `<span class="warn">${message}</span>`;
+        if (allocationChart) allocationChart.destroy();
+        if (pnlChart) pnlChart.destroy();
+        if (equityChart) equityChart.destroy();
+        if (drawdownChart) drawdownChart.destroy();
       }
 
       function getFollowedSymbols() {
@@ -733,7 +755,7 @@
         const symbols = payload.symbols || [];
         const trackedSymbols = symbols.filter((s) => s !== BENCHMARK_SYMBOL);
         const series = payload.series || [];
-        const summary = payload.summary || [];
+        const summary = (payload.summary || []).filter((s) => s.symbol !== BENCHMARK_SYMBOL);
         const compareBody = byId("compareBody");
         const leaderboardBody = byId("leaderboardBody");
         const correlationBody = byId("correlationBody");
@@ -795,7 +817,7 @@
           type: "line",
           data: {
             labels,
-            datasets: symbols.map((symbol, idx) => ({
+            datasets: trackedSymbols.map((symbol, idx) => ({
               label: symbol,
               data: series.map((p) => (p.normalized?.[symbol] !== null && p.normalized?.[symbol] !== undefined ? (p.normalized[symbol] - 1) * 100 : null)),
               borderColor: colors[idx % colors.length],
@@ -880,7 +902,7 @@
         const followedSymbols = getFollowedSymbols();
         const requestSymbols = [...followedSymbols];
         if (!requestSymbols.includes(BENCHMARK_SYMBOL)) requestSymbols.push(BENCHMARK_SYMBOL);
-        const providers = getSelectedProviders();
+        const providers = providersForCompare();
         const endDate = byId("snapshotDate").value || new Date().toISOString().slice(0, 10);
         const lookbackDays = Number(byId("lookbackDays").value || 180);
 
@@ -904,7 +926,7 @@
 
         try {
           byId("connStatus").textContent = "Running provider-based company compare...";
-          status.textContent = "Running provider-based company compare...";
+          status.textContent = `Running provider-based company compare with providers: ${providers.join(" → ")}...`;
           const payload = await request("/v1/companies/compare", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -916,6 +938,7 @@
             }),
           });
           renderCompanyCompare(payload);
+          renderPortfolioPlaceholders("Portfolio sections are empty until trades are imported. Compare analytics above are fully data-driven.");
           byId("compareSection").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
@@ -941,6 +964,8 @@
         const accountsBody = byId("accountsBody");
         const insights = byId("insights");
         const posStatus = byId("positionsStatus");
+        const breakdownStatus = byId("breakdownStatus");
+        const portfolioChartsStatus = byId("portfolioChartsStatus");
         try {
           await refreshPrices();
           const [metrics, positions, analytics] = await Promise.all([
@@ -1023,6 +1048,8 @@
           ];
           insights.innerHTML = insightItems.map((x) => `<li>${x}</li>`).join("");
           renderCharts(rows, analytics);
+          breakdownStatus.textContent = "Portfolio breakdown loaded from imported trade ledger.";
+          portfolioChartsStatus.textContent = "Portfolio charts loaded from imported trade ledger.";
 
           body.innerHTML = positions.positions.map((p) => `
             <tr>
@@ -1039,14 +1066,8 @@
           posStatus.textContent = `Snapshot ${positions.snapshot_date}. Rows: ${positions.positions.length}.`;
         } catch (err) {
           metricsNode.innerHTML = "";
-          body.innerHTML = "";
-          moversBody.innerHTML = "";
-          accountsBody.innerHTML = "";
+          renderPortfolioPlaceholders("Portfolio sections require imported trades. Use Trade Import, then Run Analysis.");
           insights.innerHTML = "";
-          if (allocationChart) allocationChart.destroy();
-          if (pnlChart) pnlChart.destroy();
-          if (equityChart) equityChart.destroy();
-          if (drawdownChart) drawdownChart.destroy();
           posStatus.innerHTML = `<span class="warn">${err.message}</span>`;
         }
       }
@@ -1115,6 +1136,7 @@
       }
       if (!localStorage.getItem(STORE_PROVIDERS_KEY)) localStorage.setItem(STORE_PROVIDERS_KEY, "demo, yfinance");
       syncSettingsUi();
+      renderPortfolioPlaceholders("Portfolio sections require imported trades. Use Compare Companies for market-only analytics.");
     </script>
   </body>
 </html>
