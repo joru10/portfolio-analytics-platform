@@ -177,7 +177,7 @@
       </div>
 
       <div class="grid">
-        <section class="card">
+        <section id="compareSection" class="card">
           <h3>Backend Connection</h3>
           <div class="row">
             <div>
@@ -543,6 +543,7 @@
         const summary = payload.summary || [];
         const compareBody = byId("compareBody");
         const compareStatus = byId("compareStatus");
+        const connStatus = byId("connStatus");
 
         compareBody.innerHTML = summary
           .map((s) => `
@@ -602,11 +603,15 @@
         });
 
         if (!series.length) {
-          compareStatus.innerHTML = `<span class="warn">No price history returned for the selected symbols/providers/date range. Failed: ${payload.failed_symbols.join(", ") || "n/a"}.</span>`;
+          const msg = `No price history returned for the selected symbols/providers/date range. Failed: ${payload.failed_symbols.join(", ") || "n/a"}.`;
+          compareStatus.innerHTML = `<span class="warn">${msg}</span>`;
+          connStatus.innerHTML = `<span class="warn">${msg}</span>`;
           return;
         }
 
-        compareStatus.innerHTML = `Compared ${symbols.length} symbols from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
+        const msg = `Compared ${symbols.length} symbols (${series.length} points) from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
+        compareStatus.innerHTML = msg;
+        connStatus.innerHTML = msg;
       }
 
       async function runCompanyCompare() {
@@ -629,6 +634,7 @@
         const startDate = start.toISOString().slice(0, 10);
 
         try {
+          byId("connStatus").textContent = "Running provider-based company compare...";
           status.textContent = "Running provider-based company compare...";
           const payload = await request("/v1/companies/compare", {
             method: "POST",
@@ -641,8 +647,10 @@
             }),
           });
           renderCompanyCompare(payload);
+          byId("compareSection").scrollIntoView({ behavior: "smooth", block: "start" });
         } catch (err) {
           status.innerHTML = `<span class="warn">${err.message}</span>`;
+          byId("connStatus").innerHTML = `<span class="warn">${err.message}</span>`;
           byId("compareBody").innerHTML = "";
           if (compareNormalizedChart) compareNormalizedChart.destroy();
           if (compareReturnChart) compareReturnChart.destroy();
