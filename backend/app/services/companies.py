@@ -152,23 +152,15 @@ def compare_companies(
                 )
         db.commit()
 
-    rows = db.scalars(
-        select(PriceEOD)
-        .where(
-            PriceEOD.symbol.in_(clean_symbols),
-            PriceEOD.price_date >= start_date,
-            PriceEOD.price_date <= end_date,
-        )
-        .order_by(PriceEOD.price_date, PriceEOD.symbol)
-    ).all()
-
-    timeline = sorted({row.price_date for row in rows})
+    # Use only the data resolved in the current provider chain run.
+    # This avoids mixing stale points from previous runs with different providers.
+    timeline = sorted({dt for _, dt in points_by_key.keys()})
 
     prices_by_date: dict[date, dict[str, float | None]] = {}
     for dt in timeline:
         prices_by_date[dt] = {symbol: None for symbol in clean_symbols}
-    for row in rows:
-        prices_by_date[row.price_date][row.symbol] = float(row.close_price)
+    for (symbol, dt), (_, close_price, _) in points_by_key.items():
+        prices_by_date[dt][symbol] = float(close_price)
 
     first_price: dict[str, float | None] = {symbol: None for symbol in clean_symbols}
     series: list[CompanyComparePoint] = []

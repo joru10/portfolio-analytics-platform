@@ -601,6 +601,11 @@
           },
         });
 
+        if (!series.length) {
+          compareStatus.innerHTML = `<span class="warn">No price history returned for the selected symbols/providers/date range. Failed: ${payload.failed_symbols.join(", ") || "n/a"}.</span>`;
+          return;
+        }
+
         compareStatus.innerHTML = `Compared ${symbols.length} symbols from ${payload.start_date} to ${payload.end_date} using providers: ${payload.providers_used.join(" → ")}${payload.failed_symbols.length ? `. Failed: ${payload.failed_symbols.join(", ")}` : ""}.`;
       }
 
